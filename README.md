@@ -130,7 +130,7 @@ sudo chmod +x /usr/local/bin/zthfs
 sudo mkdir -p /etc/zthfs
 sudo cp config/zthfs.json /etc/zthfs/
 ```
-## ⚙️ Configuration Management
+## Configuration Management
 
 ### Configuration File Structure
 
@@ -187,7 +187,7 @@ export ZTHFS_LOG_LEVEL=debug
 zthfs mount
 ```
 
-## 📖 Usage Guide
+## Usage Guide
 
 ### Command Line Tool
 
@@ -244,7 +244,7 @@ cat /var/log/zthfs/access.log | jq '.'
 zthfs health --verbose
 ```
 
-## 📚 API Documentation
+## API Documentation
 
 Full API documentation can be found in [docs/API.md](docs/API.md), including:
 
@@ -302,7 +302,7 @@ Filesystem Operations:
 - **Storage Overhead**: Encryption overhead ~10%, logging overhead ~5%
 - **Concurrent Performance**: Supports 1000+ concurrent operations
 
-## 🏥 Compliance Certification
+## Compliance Certification
 
 ### HIPAA Compliance
 
@@ -324,7 +324,7 @@ Filesystem Operations:
 | Data Minimization | ✅ Fully Supported     | Encrypted on-demand storage      |
 | Transparency      | ✅ Fully Supported     | Detailed documentation           |
 
-## 🔍 Monitoring and Operations
+## Monitoring and Operations
 
 ### Health Checks
 
@@ -365,7 +365,7 @@ zthfs metrics --history 24h
 zthfs alert --threshold 90%
 ```
 
-## 🛠️ Development Guide
+## Development Guide
 
 ### Development Environment Setup
 
@@ -399,7 +399,7 @@ cargo test -- --nocapture
 cargo bench
 ```
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
