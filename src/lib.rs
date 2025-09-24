@@ -94,13 +94,12 @@ pub fn init() -> ZthfsResult<()> {
 
 /// Health check function
 pub fn health_check() -> ZthfsResult<String> {
-    let mut checks = Vec::new();
-
-    // Check if required dependencies are available
-    checks.push("✓ AES-GCM encryption: Available".to_string());
-    checks.push("✓ CRC32c integrity: Available".to_string());
-    checks.push("✓ JSON serialization: Available".to_string());
-    checks.push("✓ FUSE integration: Available".to_string());
+    let mut checks = vec![
+        "✓ AES-GCM encryption: Available".to_string(),
+        "✓ CRC32c integrity: Available".to_string(),
+        "✓ JSON serialization: Available".to_string(),
+        "✓ FUSE integration: Available".to_string(),
+    ];
 
     // Check system requirements
     if std::path::Path::new("/dev/fuse").exists() {

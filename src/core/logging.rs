@@ -18,6 +18,31 @@ pub struct AccessLogEntry {
     pub details: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct LogParams {
+    pub level: LogLevel,
+    pub operation: String,
+    pub path: String,
+    pub uid: u32,
+    pub gid: u32,
+    pub result: String,
+    pub details: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub file_size: Option<u64>,
+    pub checksum: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PerformanceLogParams {
+    pub operation: String,
+    pub path: String,
+    pub uid: u32,
+    pub gid: u32,
+    pub duration_ms: u64,
+    pub file_size: Option<u64>,
+    pub checksum: Option<String>,
+}
+
 impl AccessLogEntry {
     pub fn new(
         operation: String,
@@ -124,49 +149,37 @@ impl LogHandler {
         result: &str,
         details: Option<String>,
     ) -> ZthfsResult<()> {
-        self.log_structured(
-            LogLevel::Info,
-            operation,
-            path,
-            uid,
-            gid,
-            result,
-            details,
-            None,
-            None,
-            None,
-        )
-    }
-
-    pub fn log_structured(
-        &self,
-        level: LogLevel,
-        operation: &str,
-        path: &str,
-        uid: u32,
-        gid: u32,
-        result: &str,
-        details: Option<String>,
-        duration_ms: Option<u64>,
-        file_size: Option<u64>,
-        checksum: Option<String>,
-    ) -> ZthfsResult<()> {
-        if !self.config.enabled {
-            return Ok(());
-        }
-
-        let entry = StructuredLogEntry {
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            level: format!("{level:?}").to_lowercase(),
+        self.log_structured(LogParams {
+            level: LogLevel::Info,
             operation: operation.to_string(),
             path: path.to_string(),
             uid,
             gid,
             result: result.to_string(),
             details,
-            duration_ms,
-            file_size,
-            checksum,
+            duration_ms: None,
+            file_size: None,
+            checksum: None,
+        })
+    }
+
+    pub fn log_structured(&self, params: LogParams) -> ZthfsResult<()> {
+        if !self.config.enabled {
+            return Ok(());
+        }
+
+        let entry = StructuredLogEntry {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            level: format!("{:?}", params.level).to_lowercase(),
+            operation: params.operation,
+            path: params.path,
+            uid: params.uid,
+            gid: params.gid,
+            result: params.result,
+            details: params.details,
+            duration_ms: params.duration_ms,
+            file_size: params.file_size,
+            checksum: params.checksum,
         };
 
         // Add to the pending logs queue
@@ -193,42 +206,33 @@ impl LogHandler {
         error: &str,
         details: Option<String>,
     ) -> ZthfsResult<()> {
-        self.log_structured(
-            LogLevel::Error,
-            operation,
-            path,
+        self.log_structured(LogParams {
+            level: LogLevel::Error,
+            operation: operation.to_string(),
+            path: path.to_string(),
             uid,
             gid,
-            "error",
-            Some(error.to_string()),
-            None,
-            None,
-            None,
-        )
+            result: error.to_string(),
+            details,
+            duration_ms: None,
+            file_size: None,
+            checksum: None,
+        })
     }
 
-    pub fn log_performance(
-        &self,
-        operation: &str,
-        path: &str,
-        uid: u32,
-        gid: u32,
-        duration_ms: u64,
-        file_size: Option<u64>,
-        checksum: Option<String>,
-    ) -> ZthfsResult<()> {
-        self.log_structured(
-            LogLevel::Debug,
-            operation,
-            path,
-            uid,
-            gid,
-            "success",
-            Some(format!("Operation completed in {duration_ms}ms")),
-            Some(duration_ms),
-            file_size,
-            checksum,
-        )
+    pub fn log_performance(&self, params: PerformanceLogParams) -> ZthfsResult<()> {
+        self.log_structured(LogParams {
+            level: LogLevel::Debug,
+            operation: params.operation,
+            path: params.path,
+            uid: params.uid,
+            gid: params.gid,
+            result: "success".to_string(),
+            details: Some(format!("Operation completed in {}ms", params.duration_ms)),
+            duration_ms: Some(params.duration_ms),
+            file_size: params.file_size,
+            checksum: params.checksum,
+        })
     }
 
     /// Write a batch of log entries to the log file.
@@ -271,7 +275,7 @@ impl LogHandler {
     pub fn rotate_log_file(&self) -> ZthfsResult<()> {
         let base_path = Path::new(&self.config.file_path);
         let extension = base_path.extension().unwrap_or_default();
-        let stem = base_path.file_stem().unwrap_or_default();
+        let _stem = base_path.file_stem().unwrap_or_default();
 
         // Delete the oldest log file
         for i in (1..=self.config.rotation_count).rev() {
@@ -303,6 +307,7 @@ impl LogHandler {
         let new_file = OpenOptions::new()
             .create(true)
             .write(true)
+            .truncate(true)
             .open(&self.config.file_path)?;
 
         let mut writer = self
@@ -317,11 +322,12 @@ impl LogHandler {
     /// Flush all pending logs
     pub fn flush_all(&self) -> ZthfsResult<()> {
         if let Ok(mut logs) = self.pending_logs.lock()
-            && !logs.is_empty() {
-                let logs_to_write = logs.drain(..).collect::<Vec<_>>();
-                drop(logs);
-                self.flush_logs(&logs_to_write)?;
-            }
+            && !logs.is_empty()
+        {
+            let logs_to_write = logs.drain(..).collect::<Vec<_>>();
+            drop(logs);
+            self.flush_logs(&logs_to_write)?;
+        }
         Ok(())
     }
 

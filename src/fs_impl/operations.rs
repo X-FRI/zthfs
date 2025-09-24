@@ -75,12 +75,13 @@ impl FileSystemOperations {
         // Verify integrity
         if let Some(expected_checksum) =
             IntegrityHandler::get_checksum_from_xattr(&real_path, &fs.config.integrity)?
-            && !IntegrityHandler::verify_integrity(&encrypted_data, expected_checksum) {
-                log::warn!("Data integrity check failed for {path:?}");
-                return Err(ZthfsError::Integrity(
-                    "Data integrity verification failed".to_string(),
-                ));
-            }
+            && !IntegrityHandler::verify_integrity(&encrypted_data, expected_checksum)
+        {
+            log::warn!("Data integrity check failed for {path:?}");
+            return Err(ZthfsError::Integrity(
+                "Data integrity verification failed".to_string(),
+            ));
+        }
 
         // Decrypt data
         let path_str = path.to_string_lossy();
@@ -155,7 +156,7 @@ impl FileSystemOperations {
         }
 
         // Create file
-        let file = fs::File::create(&real_path)?;
+        let _file = fs::File::create(&real_path)?;
 
         // Set file permissions
         let mut perms = fs::metadata(&real_path)?.permissions();
@@ -248,7 +249,7 @@ impl FileSystemOperations {
     /// Get available space.
     pub fn get_available_space(fs: &Zthfs) -> ZthfsResult<u64> {
         // Simplified to check the available space of the data directory.
-        let metadata = fs::metadata(&fs.data_dir)?;
+        let _metadata = fs::metadata(&fs.data_dir)?;
         // TODO: Use a more accurate method to get the available space.
         // TODO: Return an estimated value for now.
         Ok(1024 * 1024 * 1024) // 1GB as fallback

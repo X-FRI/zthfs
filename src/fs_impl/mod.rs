@@ -4,8 +4,8 @@ use crate::core::integrity::IntegrityHandler;
 use crate::core::logging::LogHandler;
 use crate::errors::ZthfsResult;
 use fuser::{
-    Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
-    ReplyEntry, ReplyWrite, Request,
+    Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry,
+    ReplyWrite, Request,
 };
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -17,7 +17,6 @@ pub mod operations;
 pub mod security;
 pub mod utils;
 
-const BLOCK_SIZE: u32 = 4096;
 const TTL: Duration = Duration::from_secs(1);
 
 pub struct Zthfs {
@@ -27,9 +26,6 @@ pub struct Zthfs {
     logger: Arc<LogHandler>,
     /// inode to actual file path mapping
     inodes: Mutex<HashMap<u64, PathBuf>>,
-
-    /// next inode to assign
-    next_inode: Mutex<u64>,
 }
 
 impl Zthfs {
@@ -55,7 +51,6 @@ impl Zthfs {
             encryption,
             logger,
             inodes: Mutex::new(HashMap::new()),
-            next_inode: Mutex::new(1), // inode 0 is reserved
         })
     }
 
@@ -91,7 +86,7 @@ impl Zthfs {
 
 impl Filesystem for Zthfs {
     /// When the file system client needs to find a file or directory under the parent directory, it is called.
-    fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+    fn lookup(&mut self, _req: &Request, _parent: u64, name: &OsStr, reply: ReplyEntry) {
         // Build the virtual path based on name.
         let path = Path::new("/").join(name);
         let uid = _req.uid();
@@ -138,7 +133,7 @@ impl Filesystem for Zthfs {
     }
 
     /// Get the attributes of the specified inode (file or directory).
-    fn getattr(&mut self, _req: &Request, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
+    fn getattr(&mut self, _req: &Request, _ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
         let path = Path::new("/");
         let uid = _req.uid();
         let gid = _req.gid();
@@ -192,7 +187,7 @@ impl Filesystem for Zthfs {
     fn read(
         &mut self,
         _req: &Request,
-        ino: u64,
+        _ino: u64,
         _fh: u64,
         offset: i64,
         size: u32,
@@ -252,9 +247,9 @@ impl Filesystem for Zthfs {
     fn write(
         &mut self,
         _req: &Request,
-        ino: u64,
+        _ino: u64,
         _fh: u64,
-        offset: i64,
+        _offset: i64,
         data: &[u8],
         _write_flags: u32,
         _flags: i32,
@@ -301,7 +296,7 @@ impl Filesystem for Zthfs {
     fn readdir(
         &mut self,
         _req: &Request,
-        ino: u64,
+        _ino: u64,
         _fh: u64,
         offset: i64,
         mut reply: ReplyDirectory,
@@ -359,11 +354,11 @@ impl Filesystem for Zthfs {
     fn create(
         &mut self,
         _req: &Request,
-        parent: u64,
+        _parent: u64,
         name: &OsStr,
         mode: u32,
         _umask: u32,
-        flags: i32,
+        _flags: i32,
         reply: ReplyCreate,
     ) {
         let path = Path::new("/").join(name);
@@ -409,7 +404,7 @@ impl Filesystem for Zthfs {
         }
     }
 
-    fn unlink(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEmpty) {
+    fn unlink(&mut self, _req: &Request, _parent: u64, name: &OsStr, reply: ReplyEmpty) {
         let path = Path::new("/").join(name);
         let uid = _req.uid();
         let gid = _req.gid();

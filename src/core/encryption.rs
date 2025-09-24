@@ -33,9 +33,10 @@ impl EncryptionHandler {
     pub fn generate_nonce(&self, path: &str) -> GenericArray<u8, U12> {
         // Check cache
         if let Ok(cache) = self.nonce_cache.lock()
-            && let Some(nonce) = cache.get(path) {
-                return *nonce;
-            }
+            && let Some(nonce) = cache.get(path)
+        {
+            return *nonce;
+        }
 
         // Generate new nonce
         let hash = crc32c(path.as_bytes()) ^ crc32c(&self.nonce_seed);

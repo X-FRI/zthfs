@@ -92,7 +92,15 @@ logger.log_access("read", "/file.txt", 1000, 1000, "success", None).unwrap();
 logger.log_error("write", "/file.txt", 1000, 1000, "permission denied", None).unwrap();
 
 // Log performance metrics
-logger.log_performance("encrypt", "/file.txt", 1000, 1000, 150, Some(1024), Some("abc123")).unwrap();
+logger.log_performance(zthfs::core::logging::PerformanceLogParams {
+    operation: "encrypt".to_string(),
+    path: "/file.txt".to_string(),
+    uid: 1000,
+    gid: 1000,
+    duration_ms: 150,
+    file_size: Some(1024),
+    checksum: Some("abc123".to_string()),
+}).unwrap();
 
 // Flush all logs
 logger.flush_all().unwrap();

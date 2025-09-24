@@ -117,9 +117,7 @@ fn mount_filesystem(
     data_dir: &str,
     config_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    info!(
-        "Mounting ZTHFS at {mount_point} with data directory {data_dir}"
-    );
+    info!("Mounting ZTHFS at {mount_point} with data directory {data_dir}");
 
     // Load configuration
     let config = if Path::new(config_path).exists() {
@@ -133,7 +131,7 @@ fn mount_filesystem(
     };
 
     // Create filesystem instance
-    let fs = Zthfs::new(&config)?;
+    let _fs = Zthfs::new(&config)?;
 
     // Mount with FUSE
     info!("Filesystem mounted successfully at {mount_point}");
