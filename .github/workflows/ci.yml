@@ -181,7 +181,7 @@ jobs:
 
     - name: Install performance tools
       run: |
-        cargo install --git https://github.com/flamegraph-rs/flamegraph cargo-flamegraph
+        cargo install --git https://github.com/flamegraph-rs/flamegraph
 
     - name: Run performance benchmarks
       run: |
