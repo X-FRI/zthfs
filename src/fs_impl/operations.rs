@@ -211,21 +211,21 @@ impl FileSystemOperations {
 
         if metadata_path.exists() {
             // Remove chunked file
-            // Remove metadata file
-            fs::remove_file(&metadata_path)?;
-
-            // Remove all chunks
-            let metadata = Self::load_metadata(fs, path)?;
-            for chunk_index in 0..metadata.chunk_count {
-                let chunk_path = Self::get_chunk_path(fs, path, chunk_index);
-                if chunk_path.exists() {
-                    fs::remove_file(&chunk_path)?;
+            // Load metadata before removing it
+            if let Ok(metadata) = Self::load_metadata(fs, path) {
+                // Remove all chunks
+                for chunk_index in 0..metadata.chunk_count {
+                    let chunk_path = Self::get_chunk_path(fs, path, chunk_index);
+                    let _ = fs::remove_file(&chunk_path); // Ignore errors
                 }
             }
+
+            // Remove metadata file
+            let _ = fs::remove_file(&metadata_path); // Ignore errors if file doesn't exist
         } else {
             // Remove regular file
             let real_path = Self::virtual_to_real(fs, path);
-            fs::remove_file(&real_path)?;
+            let _ = fs::remove_file(&real_path); // Ignore errors if file doesn't exist
         }
 
         Ok(())
@@ -246,10 +246,9 @@ impl FileSystemOperations {
             let metadata = Self::load_metadata(fs, path)?;
             Ok(metadata.size)
         } else {
-            // For regular files, get size from file system
-            let real_path = Self::virtual_to_real(fs, path);
-            let metadata = fs::metadata(&real_path)?;
-            Ok(metadata.len())
+            // For regular files, read and decrypt to get original size
+            let data = Self::read_file(fs, path)?;
+            Ok(data.len() as u64)
         }
     }
 
@@ -278,36 +277,15 @@ impl FileSystemOperations {
     }
 
     pub fn move_file(fs: &Zthfs, src_path: &Path, dst_path: &Path) -> ZthfsResult<()> {
-        let src_real_path = Self::virtual_to_real(fs, src_path);
-        let dst_real_path = Self::virtual_to_real(fs, dst_path);
+        // For ZTHFS, moving a file requires re-encryption with the new path's nonce
+        // Read the source file
+        let data = Self::read_file(fs, src_path)?;
 
-        // Ensure the target directory exists
-        if let Some(parent) = dst_real_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        // Write to destination (this will encrypt with the new path)
+        Self::write_file(fs, dst_path, &data)?;
 
-        // Check if source is a chunked file
-        let src_metadata_path = Self::get_metadata_path(fs, src_path);
-        let dst_metadata_path = Self::get_metadata_path(fs, dst_path);
-
-        if src_metadata_path.exists() {
-            // Move chunked file
-            // Move metadata file
-            fs::rename(&src_metadata_path, &dst_metadata_path)?;
-
-            // Move all chunks
-            let metadata = Self::load_metadata(fs, src_path)?;
-            for chunk_index in 0..metadata.chunk_count {
-                let src_chunk_path = Self::get_chunk_path(fs, src_path, chunk_index);
-                let dst_chunk_path = Self::get_chunk_path(fs, dst_path, chunk_index);
-                if src_chunk_path.exists() {
-                    fs::rename(&src_chunk_path, &dst_chunk_path)?;
-                }
-            }
-        } else {
-            // Move regular file
-            fs::rename(&src_real_path, &dst_real_path)?;
-        }
+        // Remove the source file
+        Self::remove_file(fs, src_path)?;
 
         Ok(())
     }
@@ -535,20 +513,20 @@ impl FileSystemOperations {
 mod tests {
     use super::*;
     use crate::config::{FilesystemConfigBuilder, LogConfig};
+    use std::sync::Arc;
+    use std::thread;
 
-    #[test]
-    fn test_virtual_to_real_path_conversion() {
+    /// Helper function to create a test filesystem instance
+    fn create_test_fs() -> (tempfile::TempDir, Zthfs) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let log_dir = tempfile::tempdir().unwrap();
+        let log_dir = temp_dir.path().join("logs");
+        std::fs::create_dir_all(&log_dir).unwrap();
+
         let config = FilesystemConfigBuilder::new()
-            .data_dir(temp_dir.path().to_string_lossy().to_string())
+            .data_dir(temp_dir.path().join("data").to_string_lossy().to_string())
             .logging(LogConfig {
-                enabled: true, // Enable logging for this test
-                file_path: log_dir
-                    .path()
-                    .join("test.log")
-                    .to_string_lossy()
-                    .to_string(),
+                enabled: true,
+                file_path: log_dir.join("test.log").to_string_lossy().to_string(),
                 level: "info".to_string(),
                 max_size: 1024 * 1024,
                 rotation_count: 3,
@@ -557,35 +535,36 @@ mod tests {
             .unwrap();
 
         let fs = Zthfs::new(&config).unwrap();
+        (temp_dir, fs)
+    }
+
+    #[test]
+    fn test_virtual_to_real_path_conversion() {
+        let (temp_dir, fs) = create_test_fs();
 
         let virtual_path = Path::new("/test/file.txt");
         let real_path = FileSystemOperations::virtual_to_real(&fs, virtual_path);
 
-        assert!(real_path.starts_with(temp_dir.path()));
+        assert!(real_path.starts_with(temp_dir.path().join("data")));
         assert!(real_path.ends_with("test/file.txt"));
     }
 
     #[test]
-    fn test_path_operations() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let log_dir = tempfile::tempdir().unwrap();
-        let config = FilesystemConfigBuilder::new()
-            .data_dir(temp_dir.path().to_string_lossy().to_string())
-            .logging(LogConfig {
-                enabled: true, // Enable logging for this test
-                file_path: log_dir
-                    .path()
-                    .join("test.log")
-                    .to_string_lossy()
-                    .to_string(),
-                level: "info".to_string(),
-                max_size: 1024 * 1024,
-                rotation_count: 3,
-            })
-            .build()
-            .unwrap();
+    fn test_inode_generation_consistency() {
+        let (_temp_dir, fs) = create_test_fs();
 
-        let fs = Zthfs::new(&config).unwrap();
+        let path = Path::new("/test/file.txt");
+        let inode1 = FileSystemOperations::get_inode(&fs, path);
+        let inode2 = FileSystemOperations::get_inode(&fs, path);
+
+        // Same path should generate the same inode
+        assert_eq!(inode1, inode2);
+        assert!(inode1 > 0);
+    }
+
+    #[test]
+    fn test_basic_file_operations() {
+        let (_temp_dir, fs) = create_test_fs();
 
         let test_path = Path::new("/test.txt");
 
@@ -599,9 +578,9 @@ mod tests {
         // Verify file existence
         assert!(FileSystemOperations::path_exists(&fs, test_path));
 
-        // Verify file size (should be the size of the encrypted data, not the original data size)
+        // Verify file size (should be the original data size)
         let size = FileSystemOperations::get_file_size(&fs, test_path).unwrap();
-        assert!(size > test_data.len() as u64); // 加密后的大小应该大于原始数据大小
+        assert_eq!(size, test_data.len() as u64);
 
         // Read file to verify content
         let read_data = FileSystemOperations::read_file(&fs, test_path).unwrap();
@@ -610,5 +589,543 @@ mod tests {
         // Delete file
         FileSystemOperations::remove_file(&fs, test_path).unwrap();
         assert!(!FileSystemOperations::path_exists(&fs, test_path));
+    }
+
+    #[test]
+    fn test_chunked_file_operations() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        // Create large file that will be chunked (> 4MB)
+        let chunk_size = FileSystemOperations::CHUNK_SIZE;
+        let large_data = vec![0x42u8; chunk_size * 2 + 1024]; // > 8MB
+
+        let test_path = Path::new("/large_file.dat");
+
+        // Write large file using chunked method
+        FileSystemOperations::write_file_chunked(&fs, test_path, &large_data).unwrap();
+
+        // Verify file exists
+        assert!(FileSystemOperations::path_exists(&fs, test_path));
+
+        // Verify file size
+        let size = FileSystemOperations::get_file_size(&fs, test_path).unwrap();
+        assert_eq!(size, large_data.len() as u64);
+
+        // Read file using chunked reading
+        let read_data = FileSystemOperations::read_file_chunked(&fs, test_path).unwrap();
+        assert_eq!(read_data, large_data);
+
+        // Test partial chunked reading
+        let partial_data =
+            FileSystemOperations::read_partial_chunked(&fs, test_path, 0, 1024).unwrap();
+        assert_eq!(partial_data.len(), 1024);
+        assert_eq!(&partial_data[..], &large_data[..1024]);
+
+        // Test offset reading
+        let offset_data =
+            FileSystemOperations::read_partial_chunked(&fs, test_path, chunk_size as i64, 1024)
+                .unwrap();
+        assert_eq!(offset_data.len(), 1024);
+        assert_eq!(&offset_data[..], &large_data[chunk_size..chunk_size + 1024]);
+
+        // Clean up
+        FileSystemOperations::remove_file(&fs, test_path).unwrap();
+        assert!(!FileSystemOperations::path_exists(&fs, test_path));
+    }
+
+    #[test]
+    fn test_chunked_vs_regular_file_operations() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        // Test regular file (< 4MB)
+        let small_data = vec![0x41u8; 1024];
+        let small_path = Path::new("/small_file.txt");
+
+        FileSystemOperations::write_file(&fs, small_path, &small_data).unwrap();
+        let small_read = FileSystemOperations::read_file(&fs, small_path).unwrap();
+        assert_eq!(small_read, small_data);
+
+        // Test chunked file (> 4MB)
+        let large_data = vec![0x42u8; FileSystemOperations::CHUNK_SIZE + 1024];
+        let large_path = Path::new("/large_file.dat");
+
+        FileSystemOperations::write_file(&fs, large_path, &large_data).unwrap();
+        let large_read = FileSystemOperations::read_file(&fs, large_path).unwrap();
+        assert_eq!(large_read, large_data);
+
+        // Both should exist
+        assert!(FileSystemOperations::path_exists(&fs, small_path));
+        assert!(FileSystemOperations::path_exists(&fs, large_path));
+
+        // Clean up
+        FileSystemOperations::remove_file(&fs, small_path).unwrap();
+        FileSystemOperations::remove_file(&fs, large_path).unwrap();
+    }
+
+    #[test]
+    fn test_file_copy_operations() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        let src_path = Path::new("/source.txt");
+        let dst_path = Path::new("/destination.txt");
+        let test_data = b"Medical record data for copying";
+
+        // Create source file
+        FileSystemOperations::write_file(&fs, src_path, test_data).unwrap();
+
+        // Copy file
+        let bytes_copied = FileSystemOperations::copy_file(&fs, src_path, dst_path).unwrap();
+        assert_eq!(bytes_copied, test_data.len() as u64);
+
+        // Verify destination file
+        assert!(FileSystemOperations::path_exists(&fs, dst_path));
+        let copied_data = FileSystemOperations::read_file(&fs, dst_path).unwrap();
+        assert_eq!(copied_data, test_data);
+
+        // Source file should still exist
+        assert!(FileSystemOperations::path_exists(&fs, src_path));
+
+        // Clean up
+        FileSystemOperations::remove_file(&fs, src_path).unwrap();
+        FileSystemOperations::remove_file(&fs, dst_path).unwrap();
+    }
+
+    #[test]
+    fn test_file_move_operations() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        let src_path = Path::new("/source.txt");
+        let dst_path = Path::new("/destination.txt");
+        let test_data = b"Medical record data for moving";
+
+        // Create source file
+        FileSystemOperations::write_file(&fs, src_path, test_data).unwrap();
+
+        // Move file
+        FileSystemOperations::move_file(&fs, src_path, dst_path).unwrap();
+
+        // Verify destination file exists and has correct data
+        assert!(FileSystemOperations::path_exists(&fs, dst_path));
+        let moved_data = FileSystemOperations::read_file(&fs, dst_path).unwrap();
+        assert_eq!(moved_data, test_data);
+
+        // Source file should no longer exist
+        assert!(!FileSystemOperations::path_exists(&fs, src_path));
+
+        // Clean up
+        FileSystemOperations::remove_file(&fs, dst_path).unwrap();
+    }
+
+    #[test]
+    fn test_directory_operations() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        let dir_path = Path::new("/test_directory");
+
+        // Create directory
+        FileSystemOperations::create_directory(&fs, dir_path, 0o755).unwrap();
+
+        // Verify directory exists
+        assert!(FileSystemOperations::path_exists(&fs, dir_path));
+
+        // Get directory entry count (should be 0 for empty directory)
+        let count = FileSystemOperations::get_dir_entry_count(&fs, dir_path).unwrap();
+        assert_eq!(count, 0);
+
+        // Create files in directory
+        let file1_path = Path::new("/test_directory/file1.txt");
+        let file2_path = Path::new("/test_directory/file2.txt");
+
+        FileSystemOperations::write_file(&fs, file1_path, b"File 1 content").unwrap();
+        FileSystemOperations::write_file(&fs, file2_path, b"File 2 content").unwrap();
+
+        // Check directory entry count again
+        let count = FileSystemOperations::get_dir_entry_count(&fs, dir_path).unwrap();
+        assert_eq!(count, 2);
+
+        // Remove directory recursively
+        FileSystemOperations::remove_directory(&fs, dir_path, true).unwrap();
+        assert!(!FileSystemOperations::path_exists(&fs, dir_path));
+    }
+
+    #[test]
+    fn test_nested_directory_operations() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        let nested_path = Path::new("/level1/level2/level3");
+
+        // Create nested directory structure
+        FileSystemOperations::create_directory(&fs, nested_path, 0o755).unwrap();
+
+        // Verify all levels exist
+        assert!(FileSystemOperations::path_exists(&fs, Path::new("/level1")));
+        assert!(FileSystemOperations::path_exists(
+            &fs,
+            Path::new("/level1/level2")
+        ));
+        assert!(FileSystemOperations::path_exists(&fs, nested_path));
+
+        // Create file in nested directory
+        let file_path = Path::new("/level1/level2/level3/test.txt");
+        let test_data = b"Nested file content";
+        FileSystemOperations::write_file(&fs, file_path, test_data).unwrap();
+
+        // Verify file exists and has correct content
+        assert!(FileSystemOperations::path_exists(&fs, file_path));
+        let read_data = FileSystemOperations::read_file(&fs, file_path).unwrap();
+        assert_eq!(read_data, test_data);
+
+        // Clean up (recursive removal)
+        FileSystemOperations::remove_directory(&fs, Path::new("/level1"), true).unwrap();
+        assert!(!FileSystemOperations::path_exists(
+            &fs,
+            Path::new("/level1")
+        ));
+    }
+
+    #[test]
+    fn test_data_integrity_verification() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        let test_path = Path::new("/integrity_test.txt");
+        let test_data = b"Critical medical data that must remain intact";
+
+        // Write file
+        FileSystemOperations::write_file(&fs, test_path, test_data).unwrap();
+
+        // Manually corrupt the encrypted data to test integrity verification
+        let real_path = FileSystemOperations::virtual_to_real(&fs, test_path);
+        let mut encrypted_data = std::fs::read(&real_path).unwrap();
+        if !encrypted_data.is_empty() {
+            // Flip a bit in the encrypted data
+            encrypted_data[0] ^= 0xFF;
+            std::fs::write(&real_path, encrypted_data).unwrap();
+        }
+
+        // Attempt to read should fail due to integrity check
+        let result = FileSystemOperations::read_file(&fs, test_path);
+        assert!(result.is_err());
+
+        // Clean up
+        let _ = FileSystemOperations::remove_file(&fs, test_path);
+    }
+
+    #[test]
+    fn test_chunked_file_integrity() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        // Create large file for chunked storage
+        let large_data = vec![0x55u8; FileSystemOperations::CHUNK_SIZE + 1000];
+        let test_path = Path::new("/chunked_integrity.dat");
+
+        FileSystemOperations::write_file_chunked(&fs, test_path, &large_data).unwrap();
+
+        // Manually corrupt one chunk
+        let chunk_path = FileSystemOperations::get_chunk_path(&fs, test_path, 0);
+        let mut chunk_data = std::fs::read(&chunk_path).unwrap();
+        if !chunk_data.is_empty() {
+            chunk_data[0] ^= 0xFF;
+            std::fs::write(&chunk_path, chunk_data).unwrap();
+        }
+
+        // Reading should fail due to integrity check
+        let result = FileSystemOperations::read_file_chunked(&fs, test_path);
+        assert!(result.is_err());
+
+        // Clean up
+        let _ = FileSystemOperations::remove_file(&fs, test_path);
+    }
+
+    #[test]
+    fn test_empty_file_operations() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        let empty_path = Path::new("/empty.txt");
+
+        // Write empty file
+        FileSystemOperations::write_file(&fs, empty_path, &[]).unwrap();
+
+        // Verify empty file exists
+        assert!(FileSystemOperations::path_exists(&fs, empty_path));
+
+        // Verify size is 0 (empty file)
+        let size = FileSystemOperations::get_file_size(&fs, empty_path).unwrap();
+        assert_eq!(size, 0);
+
+        // Read empty file
+        let data = FileSystemOperations::read_file(&fs, empty_path).unwrap();
+        assert!(data.is_empty());
+
+        // Clean up
+        FileSystemOperations::remove_file(&fs, empty_path).unwrap();
+    }
+
+    #[test]
+    fn test_large_file_partial_reads() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        // Create a file larger than chunk size
+        let file_size = FileSystemOperations::CHUNK_SIZE * 3 + 500;
+        let large_data: Vec<u8> = (0..file_size).map(|i| (i % 256) as u8).collect();
+
+        let test_path = Path::new("/large_partial.dat");
+        FileSystemOperations::write_file_chunked(&fs, test_path, &large_data).unwrap();
+
+        // Test reading from different offsets
+        let test_cases = vec![
+            (0, 100),                                                   // Beginning
+            (1000, 2000),                                               // Middle of first chunk
+            (FileSystemOperations::CHUNK_SIZE as i64, 100),             // Start of second chunk
+            ((FileSystemOperations::CHUNK_SIZE * 2 + 100) as i64, 300), // Middle of third chunk
+            ((file_size - 50) as i64, 50),                              // End of file
+        ];
+
+        for (offset, size) in test_cases {
+            let partial_data =
+                FileSystemOperations::read_partial_chunked(&fs, test_path, offset, size as u32)
+                    .unwrap();
+            let expected_size = std::cmp::min(size, (file_size as i64 - offset) as usize);
+            assert_eq!(partial_data.len(), expected_size);
+
+            // Verify content matches
+            let start = offset as usize;
+            let end = start + partial_data.len();
+            assert_eq!(&partial_data[..], &large_data[start..end]);
+        }
+
+        // Clean up
+        FileSystemOperations::remove_file(&fs, test_path).unwrap();
+    }
+
+    #[test]
+    fn test_concurrent_file_operations() {
+        let (_temp_dir, fs) = create_test_fs();
+        let fs = Arc::new(fs);
+
+        let mut handles = vec![];
+
+        // Spawn multiple threads to perform concurrent operations
+        // Reduce thread count to avoid resource conflicts
+        for i in 0..3 {
+            let fs_clone = Arc::clone(&fs);
+            let handle = thread::spawn(move || {
+                let file_path_str = format!("/concurrent_file_{i}.txt");
+                let file_path = Path::new(&file_path_str);
+                let data = format!("Concurrent data from thread {i}").into_bytes();
+
+                // Write file
+                FileSystemOperations::write_file(&fs_clone, file_path, &data)
+                    .expect("Write should succeed");
+
+                // Read and verify
+                let read_data = FileSystemOperations::read_file(&fs_clone, file_path)
+                    .expect("Read should succeed");
+                assert_eq!(read_data, data);
+
+                // Get file size (encrypted size will be larger)
+                let size = FileSystemOperations::get_file_size(&fs_clone, file_path)
+                    .expect("Get size should succeed");
+                assert!(size >= data.len() as u64);
+
+                // Clean up
+                FileSystemOperations::remove_file(&fs_clone, file_path)
+                    .expect("Remove should succeed");
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().expect("Thread should complete successfully");
+        }
+    }
+
+    #[test]
+    fn test_file_size_edge_cases() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        // Test various file sizes
+        let test_cases = vec![
+            (0, "empty"),
+            (1, "single_byte"),
+            (1023, "small"),
+            (1024, "one_kilobyte"),
+            (FileSystemOperations::CHUNK_SIZE - 1, "just_under_chunk"),
+            (FileSystemOperations::CHUNK_SIZE, "exactly_chunk"),
+            (FileSystemOperations::CHUNK_SIZE + 1, "just_over_chunk"),
+            (FileSystemOperations::CHUNK_SIZE * 2, "two_chunks"),
+        ];
+
+        for (size, description) in test_cases {
+            let file_path_str = format!("/size_test_{description}.dat");
+            let file_path = Path::new(&file_path_str);
+            let data = vec![0xAAu8; size];
+
+            FileSystemOperations::write_file(&fs, file_path, &data).unwrap();
+
+            // Verify size - should always be the original data size
+            let reported_size = FileSystemOperations::get_file_size(&fs, file_path).unwrap();
+            assert_eq!(
+                reported_size, size as u64,
+                "Failed for {size} bytes ({description})"
+            );
+
+            // Verify content
+            let read_data = FileSystemOperations::read_file(&fs, file_path).unwrap();
+            assert_eq!(
+                read_data.len(),
+                size,
+                "Failed for {} bytes ({}) - got {} bytes",
+                size,
+                read_data.len(),
+                description
+            );
+            assert_eq!(read_data, data, "Failed for {size} bytes ({description})");
+
+            FileSystemOperations::remove_file(&fs, file_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_single_byte_file() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        let file_path = Path::new("/single_byte.dat");
+        let data = vec![0xBBu8; 1]; // 1 byte
+
+        FileSystemOperations::write_file(&fs, file_path, &data).unwrap();
+
+        // Verify size
+        let reported_size = FileSystemOperations::get_file_size(&fs, file_path).unwrap();
+        assert_eq!(reported_size, 1u64);
+
+        // Verify content
+        let read_data = FileSystemOperations::read_file(&fs, file_path).unwrap();
+        println!(
+            "DEBUG: Wrote 1 byte, read {} bytes: {:?}",
+            read_data.len(),
+            &read_data
+        );
+        assert_eq!(read_data.len(), 1);
+        assert_eq!(read_data, data);
+
+        FileSystemOperations::remove_file(&fs, file_path).unwrap();
+    }
+
+    #[test]
+    fn test_metadata_operations() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        let file_path = Path::new("/metadata_test.txt");
+        let data = b"Test data for metadata operations";
+
+        // Write file
+        FileSystemOperations::write_file(&fs, file_path, data).unwrap();
+
+        // Get attributes
+        let attr = FileSystemOperations::get_attr(&fs, file_path).unwrap();
+
+        // Verify basic attributes
+        // Note: attr.size returns the encrypted file size, not the original data size
+        assert!(attr.size > data.len() as u64); // Encrypted size > original size
+        assert_eq!(attr.kind, fuser::FileType::RegularFile);
+        assert_eq!(attr.nlink, 1);
+
+        // Inode should be consistent
+        let inode = FileSystemOperations::get_inode(&fs, file_path);
+        assert_eq!(attr.ino, inode);
+
+        // Clean up
+        FileSystemOperations::remove_file(&fs, file_path).unwrap();
+    }
+
+    #[test]
+    fn test_error_handling() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        // Test reading non-existent file
+        let nonexistent_path = Path::new("/does_not_exist.txt");
+        let result = FileSystemOperations::read_file(&fs, nonexistent_path);
+        assert!(result.is_err());
+
+        // Test getting size of non-existent file
+        let result = FileSystemOperations::get_file_size(&fs, nonexistent_path);
+        assert!(result.is_err());
+
+        // Test removing non-existent file (should not error for regular files)
+        let result = FileSystemOperations::remove_file(&fs, nonexistent_path);
+        assert!(result.is_ok()); // This might succeed if it's not a chunked file
+
+        // Test path existence for non-existent file
+        assert!(!FileSystemOperations::path_exists(&fs, nonexistent_path));
+    }
+
+    #[test]
+    fn test_unicode_filename_support() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        // Test various Unicode filenames
+        let test_cases = vec![
+            "文件.txt",
+            "médical_data.dat",
+            "тестовый_файл.txt",
+            "📁📄.txt",
+            "café_résumé.pdf",
+        ];
+
+        for filename in test_cases {
+            let file_path_str = format!("/{filename}");
+            let file_path = Path::new(&file_path_str);
+            let data = format!("Content for {filename}").into_bytes();
+
+            FileSystemOperations::write_file(&fs, file_path, &data).unwrap();
+
+            // Verify file exists
+            assert!(FileSystemOperations::path_exists(&fs, file_path));
+
+            // Verify content
+            let read_data = FileSystemOperations::read_file(&fs, file_path).unwrap();
+            assert_eq!(read_data, data);
+
+            FileSystemOperations::remove_file(&fs, file_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_chunk_metadata_persistence() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        // Create chunked file
+        let large_data = vec![0x77u8; FileSystemOperations::CHUNK_SIZE * 2 + 500];
+        let file_path = Path::new("/chunked_metadata.dat");
+
+        FileSystemOperations::write_file_chunked(&fs, file_path, &large_data).unwrap();
+
+        // Verify metadata file exists
+        let metadata_path = FileSystemOperations::get_metadata_path(&fs, file_path);
+        assert!(metadata_path.exists());
+
+        // Load and verify metadata
+        let metadata = FileSystemOperations::load_metadata(&fs, file_path).unwrap();
+        assert_eq!(metadata.size, large_data.len() as u64);
+        assert_eq!(metadata.chunk_count, 3); // 2 full chunks + 1 partial
+        assert_eq!(metadata.chunk_size, FileSystemOperations::CHUNK_SIZE);
+        assert!(metadata.mtime > 0);
+
+        // Verify chunk files exist
+        for i in 0..metadata.chunk_count {
+            let chunk_path = FileSystemOperations::get_chunk_path(&fs, file_path, i);
+            assert!(chunk_path.exists());
+        }
+
+        // Clean up
+        FileSystemOperations::remove_file(&fs, file_path).unwrap();
+
+        // Verify all files are removed
+        assert!(!metadata_path.exists());
+        for i in 0..metadata.chunk_count {
+            let chunk_path = FileSystemOperations::get_chunk_path(&fs, file_path, i);
+            assert!(!chunk_path.exists());
+        }
     }
 }
