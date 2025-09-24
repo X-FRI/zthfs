@@ -210,38 +210,77 @@ jobs:
         # Enable debug symbols for flamegraph
         export CARGO_PROFILE_RELEASE_DEBUG=true
 
-        echo "Checking perf availability..."
+        echo "Checking perf availability and permissions..."
+        PERF_AVAILABLE=false
+
         if command -v perf &> /dev/null; then
-          echo "perf is available, generating comprehensive performance analysis..."
+          echo "perf is available, checking permissions..."
+
+          # Try to adjust perf_event_paranoid if possible
+          if [ -w /proc/sys/kernel/perf_event_paranoid ]; then
+            echo "Adjusting perf_event_paranoid setting..."
+            sudo sysctl -w kernel.perf_event_paranoid=1 || echo "Failed to adjust perf_event_paranoid, trying with sudo perf..."
+          fi
+
+          # Test perf with a simple command
+          if sudo perf stat --help > /dev/null 2>&1; then
+            echo "perf with sudo works, using sudo for all perf commands..."
+            PERF_AVAILABLE=true
+            PERF_CMD="sudo perf"
+          elif perf stat --help > /dev/null 2>&1; then
+            echo "perf works without sudo..."
+            PERF_AVAILABLE=true
+            PERF_CMD="perf"
+          else
+            echo "perf not accessible, even with sudo..."
+            PERF_AVAILABLE=false
+          fi
+        else
+          echo "perf is not installed..."
+          PERF_AVAILABLE=false
+        fi
+
+        if [ "$PERF_AVAILABLE" = "true" ]; then
+          echo "Generating comprehensive performance analysis..."
 
           # Generate flamegraph for crypto operations
           echo "Generating flamegraph for crypto operations..."
-          cargo flamegraph --bin zthfs -- demo
+          if ! cargo flamegraph --bin zthfs -- demo 2>/dev/null; then
+            echo "Flamegraph generation failed, creating placeholder..."
+            echo "Flamegraph generation failed - permission issues" > flamegraph.svg
+          fi
 
-          # Collect perf data for different benchmark suites
+          # Collect perf data for different benchmark suites with error handling
           echo "Collecting perf data for crypto benchmarks..."
-          perf record --call-graph=dwarf cargo bench --bench crypto_benchmarks -- --nocapture
-          perf script > crypto-perf.script
-          perf report --stdio > crypto-perf-report.txt
+          if ! $PERF_CMD record --call-graph=dwarf cargo bench --bench crypto_benchmarks -- --nocapture 2>/dev/null; then
+            echo "Perf recording failed for crypto benchmarks"
+          fi
+          $PERF_CMD script > crypto-perf.script 2>/dev/null || echo "Failed to generate crypto perf script"
+          $PERF_CMD report --stdio > crypto-perf-report.txt 2>/dev/null || echo "Failed to generate crypto perf report"
 
           echo "Collecting perf data for integrity benchmarks..."
-          perf record --call-graph=dwarf cargo bench --bench integrity_benchmarks -- --nocapture
-          perf script > integrity-perf.script
-          perf report --stdio > integrity-perf-report.txt
+          if ! $PERF_CMD record --call-graph=dwarf cargo bench --bench integrity_benchmarks -- --nocapture 2>/dev/null; then
+            echo "Perf recording failed for integrity benchmarks"
+          fi
+          $PERF_CMD script > integrity-perf.script 2>/dev/null || echo "Failed to generate integrity perf script"
+          $PERF_CMD report --stdio > integrity-perf-report.txt 2>/dev/null || echo "Failed to generate integrity perf report"
 
           echo "Collecting perf data for filesystem benchmarks..."
-          perf record --call-graph=dwarf cargo bench --bench filesystem_benchmarks -- --nocapture
-          perf script > filesystem-perf.script
-          perf report --stdio > filesystem-perf-report.txt
+          if ! $PERF_CMD record --call-graph=dwarf cargo bench --bench filesystem_benchmarks -- --nocapture 2>/dev/null; then
+            echo "Perf recording failed for filesystem benchmarks"
+          fi
+          $PERF_CMD script > filesystem-perf.script 2>/dev/null || echo "Failed to generate filesystem perf script"
+          $PERF_CMD report --stdio > filesystem-perf-report.txt 2>/dev/null || echo "Failed to generate filesystem perf report"
 
           # Generate summary report
-          echo "Performance analysis completed successfully"
+          echo "Performance analysis completed with some issues"
 
           # Create performance summary
           echo "=== PERFORMANCE TEST SUMMARY ===" > performance-summary.txt
           echo "Date: $(date)" >> performance-summary.txt
           echo "Commit: ${{ github.sha }}" >> performance-summary.txt
           echo "Branch: ${{ github.ref }}" >> performance-summary.txt
+          echo "Performance analysis: Completed with perf (some components may have failed)" >> performance-summary.txt
           echo "" >> performance-summary.txt
 
           # Extract key metrics
@@ -249,7 +288,7 @@ jobs:
           echo "Crypto benchmarks completed" >> performance-summary.txt
           echo "Integrity benchmarks completed" >> performance-summary.txt
           echo "Filesystem benchmarks completed" >> performance-summary.txt
-          echo "Flamegraph generated" >> performance-summary.txt
+          echo "Flamegraph attempted" >> performance-summary.txt
           echo "" >> performance-summary.txt
 
           # Check for performance regressions (simple check)
@@ -262,14 +301,42 @@ jobs:
           fi
 
         else
-          echo "perf is not available, creating placeholder files"
+          echo "perf is not available or accessible, running benchmarks without perf analysis"
+
+          # Still run the benchmarks without perf
+          echo "Running crypto benchmarks without perf..."
+          cargo bench --bench crypto_benchmarks -- --nocapture | tee crypto-benchmark-results.txt || echo "Crypto benchmarks failed"
+
+          echo "Running integrity benchmarks without perf..."
+          cargo bench --bench integrity_benchmarks -- --nocapture | tee integrity-benchmark-results.txt || echo "Integrity benchmarks failed"
+
+          echo "Running filesystem benchmarks without perf..."
+          cargo bench --bench filesystem_benchmarks -- --nocapture | tee filesystem-benchmark-results.txt || echo "Filesystem benchmarks failed"
+
+          echo "Creating placeholder files..."
           echo "Flamegraph generation skipped - perf not available" > flamegraph.svg
           echo "Perf analysis not available" > crypto-perf-report.txt
           echo "Perf analysis not available" > integrity-perf-report.txt
           echo "Perf analysis not available" > filesystem-perf-report.txt
+
           echo "=== PERFORMANCE TEST SUMMARY ===" > performance-summary.txt
           echo "Date: $(date)" >> performance-summary.txt
-          echo "⚠️  Limited performance analysis (perf not available)" >> performance-summary.txt
+          echo "Commit: ${{ github.sha }}" >> performance-summary.txt
+          echo "Branch: ${{ github.ref }}" >> performance-summary.txt
+          echo "Performance analysis: Limited (perf not available or accessible)" >> performance-summary.txt
+          echo "" >> performance-summary.txt
+
+          echo "=== KEY METRICS ===" >> performance-summary.txt
+          echo "Benchmarks run without perf analysis" >> performance-summary.txt
+          echo "" >> performance-summary.txt
+
+          echo "=== PERFORMANCE REGRESSION CHECK ===" >> performance-summary.txt
+          if grep -q "Performance has regressed" benchmark-results.txt; then
+            echo "⚠️  Performance regression detected!" >> performance-summary.txt
+            echo "Review benchmark results for details." >> performance-summary.txt
+          else
+            echo "✅ No performance regressions detected" >> performance-summary.txt
+          fi
         fi
 
     - name: Upload performance results

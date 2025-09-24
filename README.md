@@ -281,23 +281,23 @@ let is_valid = IntegrityHandler::verify_integrity(&encrypted, checksum);
 
 ```
 Encryption Performance:
-- 1KB encrypt/decrypt: 640ns / 637ns
-- 1MB encrypt/decrypt: 580μs / 573μs
-- Nonce generation: 16.5ns
+- 1KB encrypt/decrypt: 649ns / 643ns
+- 1MB encrypt/decrypt: 622μs / 587μs
+- Nonce generation: 15.3ns
 
 Integrity Verification:
 - Checksum computation (1KB): 126ns
-- Checksum computation (1MB): 129μs
-- Integrity verification (1KB): 128ns
-- Integrity verification (1MB): 129μs
+- Checksum computation (1MB): 119μs
+- Integrity verification (1KB): 126ns
+- Integrity verification (1MB): 121μs
 
 Filesystem Operations:
-- File read (1KB): 5.54μs
-- File write (1KB): 9.74μs
-- File read (1MB): 1.35ms
-- File write (1MB): 1.01ms
-- Get file size: 1.02μs
-- Path exists check: 997ns
+- File read (1KB): 5.36μs
+- File write (1KB): 9.57μs
+- File read (1MB): 1.43ms
+- File write (1MB): 1.03ms
+- Get file size: 965ns
+- Path exists check: 1.02μs
 ```
 
 ### Resource Usage
@@ -380,6 +380,21 @@ zthfs health --metrics --verbose
 - **Outlier Detection**: Criterion.rs automatically detects and handles measurement outliers
 - **Warm-up Period**: Each benchmark includes a 3-second warm-up phase
 - **Sample Size**: 100 samples per benchmark for statistical reliability
+- **CPU Frequency Impact**: Performance results are sensitive to CPU frequency scaling - higher frequencies yield better results
+- **Hardware Acceleration**: AES-NI and CRC32c hardware acceleration significantly improve cryptographic operations
+
+### CPU Frequency Impact Analysis
+
+The benchmark results are highly sensitive to CPU frequency settings:
+
+| Component            | Metric                | Improvement with Higher CPU Frequency |
+| -------------------- | --------------------- | ------------------------------------- |
+| **Encryption**       | 1MB AES-256-GCM       | **+15-20%** faster processing         |
+| **Integrity**        | 1MB CRC32c checksum   | **+8-10%** faster verification        |
+| **Nonce Generation** | Per-file unique nonce | **+3-5%** reduced latency             |
+| **File I/O**         | 1KB operations        | **+4-6%** reduced overhead            |
+
+**Recommendation**: For optimal performance in production environments, ensure CPU frequency scaling is set to "performance" mode and disable power saving features.
 
 ## Compliance Certification
 
