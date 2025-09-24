@@ -41,9 +41,6 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
 
-    - name: Run benchmark tests
-      run: cargo bench --verbose
-
     - name: Generate test coverage
       run: |
         cargo install cargo-llvm-cov
@@ -185,11 +182,95 @@ jobs:
 
     - name: Run performance benchmarks
       run: |
-        cargo bench -- --nocapture --output-format bencher | tee benchmark-results.txt
+        echo "Running encryption benchmarks..."
+        cargo bench --bench crypto_benchmarks -- --nocapture | tee crypto-benchmark-results.txt
 
-    - name: Generate flamegraph
+        echo "Running integrity verification benchmarks..."
+        cargo bench --bench integrity_benchmarks -- --nocapture | tee integrity-benchmark-results.txt
+
+        echo "Running filesystem operations benchmarks..."
+        cargo bench --bench filesystem_benchmarks -- --nocapture | tee filesystem-benchmark-results.txt
+
+        echo "Combining all benchmark results..."
+        echo "=== CRYPTO BENCHMARKS ===" > benchmark-results.txt
+        cat crypto-benchmark-results.txt >> benchmark-results.txt
+        echo -e "\n=== INTEGRITY BENCHMARKS ===" >> benchmark-results.txt
+        cat integrity-benchmark-results.txt >> benchmark-results.txt
+        echo -e "\n=== FILESYSTEM BENCHMARKS ===" >> benchmark-results.txt
+        cat filesystem-benchmark-results.txt >> benchmark-results.txt
+
+    - name: Install system performance tools
       run: |
-        cargo flamegraph --bin zthfs -- demo
+        sudo apt-get update
+        sudo apt-get install -y linux-tools-common linux-tools-generic
+        echo "Performance tools installed successfully"
+
+    - name: Generate flamegraph and perf data
+      run: |
+        # Enable debug symbols for flamegraph
+        export CARGO_PROFILE_RELEASE_DEBUG=true
+
+        echo "Checking perf availability..."
+        if command -v perf &> /dev/null; then
+          echo "perf is available, generating comprehensive performance analysis..."
+
+          # Generate flamegraph for crypto operations
+          echo "Generating flamegraph for crypto operations..."
+          cargo flamegraph --bin zthfs -- demo
+
+          # Collect perf data for different benchmark suites
+          echo "Collecting perf data for crypto benchmarks..."
+          perf record --call-graph=dwarf cargo bench --bench crypto_benchmarks -- --nocapture
+          perf script > crypto-perf.script
+          perf report --stdio > crypto-perf-report.txt
+
+          echo "Collecting perf data for integrity benchmarks..."
+          perf record --call-graph=dwarf cargo bench --bench integrity_benchmarks -- --nocapture
+          perf script > integrity-perf.script
+          perf report --stdio > integrity-perf-report.txt
+
+          echo "Collecting perf data for filesystem benchmarks..."
+          perf record --call-graph=dwarf cargo bench --bench filesystem_benchmarks -- --nocapture
+          perf script > filesystem-perf.script
+          perf report --stdio > filesystem-perf-report.txt
+
+          # Generate summary report
+          echo "Performance analysis completed successfully"
+
+          # Create performance summary
+          echo "=== PERFORMANCE TEST SUMMARY ===" > performance-summary.txt
+          echo "Date: $(date)" >> performance-summary.txt
+          echo "Commit: ${{ github.sha }}" >> performance-summary.txt
+          echo "Branch: ${{ github.ref }}" >> performance-summary.txt
+          echo "" >> performance-summary.txt
+
+          # Extract key metrics
+          echo "=== KEY METRICS ===" >> performance-summary.txt
+          echo "Crypto benchmarks completed" >> performance-summary.txt
+          echo "Integrity benchmarks completed" >> performance-summary.txt
+          echo "Filesystem benchmarks completed" >> performance-summary.txt
+          echo "Flamegraph generated" >> performance-summary.txt
+          echo "" >> performance-summary.txt
+
+          # Check for performance regressions (simple check)
+          echo "=== PERFORMANCE REGRESSION CHECK ===" >> performance-summary.txt
+          if grep -q "Performance has regressed" benchmark-results.txt; then
+            echo "⚠️  Performance regression detected!" >> performance-summary.txt
+            echo "Review benchmark results for details." >> performance-summary.txt
+          else
+            echo "✅ No performance regressions detected" >> performance-summary.txt
+          fi
+
+        else
+          echo "perf is not available, creating placeholder files"
+          echo "Flamegraph generation skipped - perf not available" > flamegraph.svg
+          echo "Perf analysis not available" > crypto-perf-report.txt
+          echo "Perf analysis not available" > integrity-perf-report.txt
+          echo "Perf analysis not available" > filesystem-perf-report.txt
+          echo "=== PERFORMANCE TEST SUMMARY ===" > performance-summary.txt
+          echo "Date: $(date)" >> performance-summary.txt
+          echo "⚠️  Limited performance analysis (perf not available)" >> performance-summary.txt
+        fi
 
     - name: Upload performance results
       uses: actions/upload-artifact@v4
@@ -197,4 +278,11 @@ jobs:
         name: performance-results
         path: |
           benchmark-results.txt
+          crypto-benchmark-results.txt
+          integrity-benchmark-results.txt
+          filesystem-benchmark-results.txt
+          performance-summary.txt
           flamegraph.svg
+          perf.data
+          *.script
+          *-perf-report.txt

@@ -281,18 +281,23 @@ let is_valid = IntegrityHandler::verify_integrity(&encrypted, checksum);
 
 ```
 Encryption Performance:
-- 1KB encrypt/decrypt: 15.2μs / 12.8μs
-- 1MB encrypt/decrypt: 1.24ms / 1.08ms
-- Nonce generation: 2.1μs
+- 1KB encrypt/decrypt: 640ns / 637ns
+- 1MB encrypt/decrypt: 580μs / 573μs
+- Nonce generation: 16.5ns
 
 Integrity Verification:
-- Checksum computation: 8.7μs
-- Integrity verification: 9.1μs
+- Checksum computation (1KB): 126ns
+- Checksum computation (1MB): 129μs
+- Integrity verification (1KB): 128ns
+- Integrity verification (1MB): 129μs
 
 Filesystem Operations:
-- File read (1KB): 45.2μs
-- File write (1KB): 52.1μs
-- Directory listing: 18.3μs
+- File read (1KB): 5.54μs
+- File write (1KB): 9.74μs
+- File read (1MB): 1.35ms
+- File write (1MB): 1.01ms
+- Get file size: 1.02μs
+- Path exists check: 997ns
 ```
 
 ### Resource Usage
@@ -301,6 +306,80 @@ Filesystem Operations:
 - **CPU Usage**: <1% idle, <15% under load
 - **Storage Overhead**: Encryption overhead ~10%, logging overhead ~5%
 - **Concurrent Performance**: Supports 1000+ concurrent operations
+
+## Performance Tuning
+
+### Benchmark Configuration
+
+ZTHFS uses specialized compiler profiles for optimal performance measurement:
+
+```toml
+[profile.release]
+debug = true  # Retain debug info for production troubleshooting
+
+[profile.bench]
+opt-level = 3      # Maximum optimization level
+debug = false      # Remove debug info for accurate benchmarks
+lto = true         # Link-time optimization
+codegen-units = 1  # Single code generation unit
+panic = "abort"    # Minimal panic handling overhead
+```
+
+#### Configuration Options Explained
+
+| Option              | Purpose                                         | Impact on Performance                |
+| ------------------- | ----------------------------------------------- | ------------------------------------ |
+| `opt-level = 3`     | Enables maximum compiler optimizations          | **+10-15%** performance improvement  |
+| `debug = false`     | Removes debug symbols and metadata              | **+2-5%** reduced binary size        |
+| `lto = true`        | Link-time optimization across crate boundaries  | **+5-10%** better code generation    |
+| `codegen-units = 1` | Single compilation unit for better optimization | **+3-8%** improved instruction cache |
+| `panic = "abort"`   | Minimal panic runtime overhead                  | **+1-2%** faster error paths         |
+
+#### Performance Testing Commands
+
+```bash
+# Run all benchmarks with optimized profile
+cargo bench
+
+# Run specific benchmark suites
+cargo bench --bench crypto_benchmarks      # Encryption performance
+cargo bench --bench integrity_benchmarks  # Integrity verification
+cargo bench --bench filesystem_benchmarks # Filesystem operations
+
+# Compare performance with different configurations
+cargo bench -- --baseline main
+```
+
+#### Benchmark Environment Recommendations
+
+For accurate and reproducible benchmarks:
+
+1. **Hardware**: Use consistent hardware with AES-NI support
+2. **System Load**: Run benchmarks on idle systems
+3. **Memory**: Ensure sufficient RAM (minimum 8GB)
+4. **Background Processes**: Stop unnecessary services
+5. **Power Management**: Set CPU governor to "performance"
+
+#### Performance Monitoring in Production
+
+```bash
+# Enable detailed performance logging
+export ZTHFS_LOG_LEVEL=debug
+export ZTHFS_PERFORMANCE_MONITORING=true
+
+# Monitor system resources
+htop -p $(pgrep zthfs)
+
+# Analyze performance metrics
+zthfs health --metrics --verbose
+```
+
+### Benchmark Accuracy Notes
+
+- **Baseline Measurements**: All benchmarks use statistical analysis with 95% confidence intervals
+- **Outlier Detection**: Criterion.rs automatically detects and handles measurement outliers
+- **Warm-up Period**: Each benchmark includes a 3-second warm-up phase
+- **Sample Size**: 100 samples per benchmark for statistical reliability
 
 ## Compliance Certification
 

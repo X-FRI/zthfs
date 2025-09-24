@@ -31,3 +31,23 @@ criterion = "0.5"
 name = "crypto_benchmarks"
 harness = false
 path = "benches/crypto_benchmarks.rs"
+
+[[bench]]
+name = "integrity_benchmarks"
+harness = false
+path = "benches/integrity_benchmarks.rs"
+
+[[bench]]
+name = "filesystem_benchmarks"
+harness = false
+path = "benches/filesystem_benchmarks.rs"
+
+[profile.release]
+debug = true
+
+[profile.bench]
+opt-level = 3
+debug = false
+lto = true
+codegen-units = 1
+panic = "abort"
