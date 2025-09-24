@@ -274,14 +274,18 @@ mod tests {
 
     #[test]
     fn test_config_validation() {
-        let mut config = FilesystemConfig::default();
-
         // Empty data directory should fail
-        config.data_dir = String::new();
+        let config = FilesystemConfig {
+            data_dir: String::new(),
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
 
         // Restore default values
-        config.data_dir = "/tmp/test".to_string();
+        let config = FilesystemConfig {
+            data_dir: "/tmp/test".to_string(),
+            ..Default::default()
+        };
         assert!(config.validate().is_ok());
     }
 

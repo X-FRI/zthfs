@@ -409,19 +409,23 @@ mod tests {
 
     #[test]
     fn test_config_validation() {
-        let mut config = LogConfig::default();
-
         // Disabling logging should always be valid
-        config.enabled = false;
+        let config = LogConfig {
+            enabled: false,
+            ..Default::default()
+        };
         assert!(LogHandler::validate_config(&config).is_ok());
 
         // When logging is enabled, the file path cannot be empty
-        config.enabled = true;
-        config.file_path = String::new();
+        let config = LogConfig {
+            enabled: true,
+            file_path: String::new(),
+            ..Default::default()
+        };
         assert!(LogHandler::validate_config(&config).is_err());
 
         // Valid configuration
-        config.file_path = "/tmp/test.log".to_string();
+        let config = LogConfig::default();
         assert!(LogHandler::validate_config(&config).is_ok());
     }
 }

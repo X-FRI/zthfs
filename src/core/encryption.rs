@@ -154,14 +154,15 @@ mod tests {
 
     #[test]
     fn test_config_validation() {
-        let mut config = EncryptionConfig::default();
-
         // Invalid key length
-        config.key = vec![1, 2, 3]; // 3 bytes instead of 32
+        let config = EncryptionConfig {
+            key: vec![1, 2, 3],
+            ..Default::default()
+        }; // 3 bytes instead of 32
         assert!(EncryptionHandler::validate_config(&config).is_err());
 
         // Restore valid configuration
-        config = EncryptionConfig::default();
+        let config = EncryptionConfig::default();
         assert!(EncryptionHandler::validate_config(&config).is_ok());
     }
 

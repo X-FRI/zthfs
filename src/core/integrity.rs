@@ -128,19 +128,23 @@ mod tests {
 
     #[test]
     fn test_config_validation() {
-        let mut config = IntegrityConfig::default();
-
         // Disabling integrity verification should always be valid
-        config.enabled = false;
+        let config = IntegrityConfig {
+            enabled: false,
+            ..Default::default()
+        };
         assert!(IntegrityHandler::validate_config(&config).is_ok());
 
         // When enabling integrity verification, the namespace cannot be empty
-        config.enabled = true;
-        config.xattr_namespace = String::new();
+        let config = IntegrityConfig {
+            enabled: true,
+            xattr_namespace: String::new(),
+            ..Default::default()
+        };
         assert!(IntegrityHandler::validate_config(&config).is_err());
 
         // Valid configuration
-        config.xattr_namespace = "test".to_string();
+        let config = IntegrityConfig::default();
         assert!(IntegrityHandler::validate_config(&config).is_ok());
     }
 
@@ -156,6 +160,6 @@ mod tests {
     fn test_supported_algorithms() {
         let algorithms = IntegrityHandler::supported_algorithms();
         assert!(algorithms.contains(&"crc32c"));
-        assert!(algorithms.len() >= 1);
+        assert!(!algorithms.is_empty());
     }
 }
