@@ -1,5 +1,3 @@
-use crate::config::FilesystemConfig;
-use crate::core::encryption::EncryptionHandler;
 use crate::core::integrity::IntegrityHandler;
 use crate::errors::{ZthfsError, ZthfsResult};
 use crate::fs_impl::Zthfs;
@@ -53,7 +51,7 @@ impl FileSystemOperations {
         Ok(FileAttr {
             ino: inode,
             size: metadata.len(),
-            blocks: (metadata.len() + 4096 - 1) / 4096,
+            blocks: metadata.len().div_ceil(4096),
             atime: metadata.accessed()?,
             mtime: metadata.modified()?,
             ctime: metadata.created()?,
@@ -77,14 +75,12 @@ impl FileSystemOperations {
         // Verify integrity
         if let Some(expected_checksum) =
             IntegrityHandler::get_checksum_from_xattr(&real_path, &fs.config.integrity)?
-        {
-            if !IntegrityHandler::verify_integrity(&encrypted_data, expected_checksum) {
-                log::warn!("Data integrity check failed for {:?}", path);
+            && !IntegrityHandler::verify_integrity(&encrypted_data, expected_checksum) {
+                log::warn!("Data integrity check failed for {path:?}");
                 return Err(ZthfsError::Integrity(
                     "Data integrity verification failed".to_string(),
                 ));
             }
-        }
 
         // Decrypt data
         let path_str = path.to_string_lossy();

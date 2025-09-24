@@ -88,7 +88,7 @@ pub const BUILD_INFO: &str = concat!(
 /// Initialize the ZTHFS system with logging
 pub fn init() -> ZthfsResult<()> {
     env_logger::init();
-    log::info!("ZTHFS v{} initialized", VERSION);
+    log::info!("ZTHFS v{VERSION} initialized");
     Ok(())
 }
 
@@ -97,10 +97,10 @@ pub fn health_check() -> ZthfsResult<String> {
     let mut checks = Vec::new();
 
     // Check if required dependencies are available
-    checks.push(format!("✓ AES-GCM encryption: Available"));
-    checks.push(format!("✓ CRC32c integrity: Available"));
-    checks.push(format!("✓ JSON serialization: Available"));
-    checks.push(format!("✓ FUSE integration: Available"));
+    checks.push("✓ AES-GCM encryption: Available".to_string());
+    checks.push("✓ CRC32c integrity: Available".to_string());
+    checks.push("✓ JSON serialization: Available".to_string());
+    checks.push("✓ FUSE integration: Available".to_string());
 
     // Check system requirements
     if std::path::Path::new("/dev/fuse").exists() {

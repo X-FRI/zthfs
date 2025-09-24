@@ -1,7 +1,12 @@
 use clap::{Parser, Subcommand};
 use log::info;
 use std::path::Path;
-use zthfs::{VERSION, config::FilesystemConfigBuilder, fs_impl::Zthfs, health_check, init};
+use zthfs::{
+    VERSION,
+    config::{FilesystemConfigBuilder, LogConfig},
+    fs_impl::Zthfs,
+    health_check, init,
+};
 
 #[derive(Parser)]
 #[command(name = "zthfs")]
@@ -113,8 +118,7 @@ fn mount_filesystem(
     config_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!(
-        "Mounting ZTHFS at {} with data directory {}",
-        mount_point, data_dir
+        "Mounting ZTHFS at {mount_point} with data directory {data_dir}"
     );
 
     // Load configuration
@@ -129,22 +133,22 @@ fn mount_filesystem(
     };
 
     // Create filesystem instance
-    let mut fs = Zthfs::new(&config)?;
+    let fs = Zthfs::new(&config)?;
 
     // Mount with FUSE
-    info!("Filesystem mounted successfully at {}", mount_point);
+    info!("Filesystem mounted successfully at {mount_point}");
     Ok(())
 }
 
 fn unmount_filesystem(mount_point: &str) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Unmounting ZTHFS at {}", mount_point);
+    info!("Unmounting ZTHFS at {mount_point}");
     // Note: Actual unmounting would require platform-specific code
     info!("Filesystem unmounted successfully");
     Ok(())
 }
 
 fn initialize_config(config_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Initializing ZTHFS configuration at {}", config_path);
+    info!("Initializing ZTHFS configuration at {config_path}");
 
     let config = FilesystemConfigBuilder::new()
         .data_dir("/var/lib/zthfs/data".to_string())
@@ -152,12 +156,12 @@ fn initialize_config(config_path: &str) -> Result<(), Box<dyn std::error::Error>
         .build()?;
 
     config.save_to_file(config_path)?;
-    info!("Configuration saved to {}", config_path);
+    info!("Configuration saved to {config_path}");
     Ok(())
 }
 
 fn validate_config(config_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Validating configuration at {}", config_path);
+    info!("Validating configuration at {config_path}");
 
     let config = zthfs::config::FilesystemConfig::from_file(config_path)?;
 
@@ -184,7 +188,7 @@ fn validate_config(config_path: &str) -> Result<(), Box<dyn std::error::Error>> 
             );
         }
         Err(e) => {
-            info!("✗ Configuration is invalid: {}", e);
+            info!("✗ Configuration is invalid: {e}");
             return Err(e.to_string().into());
         }
     }
@@ -198,10 +202,10 @@ fn run_health_check() -> Result<(), Box<dyn std::error::Error>> {
     match health_check() {
         Ok(report) => {
             println!("ZTHFS Health Check Report:");
-            println!("{}", report);
+            println!("{report}");
         }
         Err(e) => {
-            println!("Health check failed: {}", e);
+            println!("Health check failed: {e}");
             return Err(Box::new(e));
         }
     }
@@ -225,9 +229,20 @@ fn run_demo() -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all(&mount_point)?;
 
     // Create configuration
+    let log_dir = temp_dir.path().join("logs");
+    fs::create_dir_all(&log_dir)?;
+    let log_file = log_dir.join("demo.log");
+
     let config = FilesystemConfigBuilder::new()
         .data_dir(data_dir.to_string_lossy().to_string())
         .mount_point(mount_point.to_string_lossy().to_string())
+        .logging(LogConfig {
+            enabled: true,
+            file_path: log_file.to_string_lossy().to_string(),
+            level: "info".to_string(),
+            max_size: 1024 * 1024, // 1MB for demo
+            rotation_count: 2,
+        })
         .build()?;
 
     // Create filesystem instance
@@ -273,7 +288,7 @@ fn run_demo() -> Result<(), Box<dyn std::error::Error>> {
 
 fn show_system_info() -> Result<(), Box<dyn std::error::Error>> {
     println!("ZTHFS - Zero-Trust Healthcare File System");
-    println!("Version: {}", VERSION);
+    println!("Version: {VERSION}");
     println!("Build Info: {}", zthfs::BUILD_INFO);
 
     println!("\nCore Features:");

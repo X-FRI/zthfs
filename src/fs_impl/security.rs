@@ -102,7 +102,7 @@ impl SecurityValidator {
             self.record_security_event(
                 SecurityEvent::AuthenticationFailure {
                     user: uid,
-                    reason: format!("Too many failed attempts: {}", count),
+                    reason: format!("Too many failed attempts: {count}"),
                 },
                 SecurityLevel::High,
             )?;
@@ -139,7 +139,7 @@ impl SecurityValidator {
             } => (
                 user,
                 "authorization_failure".to_string(),
-                format!("{} on {}", operation, path),
+                format!("{operation} on {path}"),
             ),
             SecurityEvent::SuspiciousActivity {
                 user,
@@ -148,17 +148,17 @@ impl SecurityValidator {
             } => (
                 user,
                 "suspicious_activity".to_string(),
-                format!("{}: {}", activity, details),
+                format!("{activity}: {details}"),
             ),
             SecurityEvent::EncryptionFailure { path, error } => (
                 0,
                 "encryption_failure".to_string(),
-                format!("{}: {}", path, error),
+                format!("{path}: {error}"),
             ),
             SecurityEvent::IntegrityCheckFailure { path, checksum } => (
                 0,
                 "integrity_failure".to_string(),
-                format!("{} checksum mismatch: {}", path, checksum),
+                format!("{path} checksum mismatch: {checksum}"),
             ),
         };
 
@@ -205,13 +205,12 @@ impl SecurityValidator {
         }
 
         // Check for suspicious file extensions
-        let suspicious_extensions = vec!["exe", "bat", "cmd", "scr", "pif", "com"];
+        let suspicious_extensions = ["exe", "bat", "cmd", "scr", "pif", "com"];
         if let Some(ext) = std::path::Path::new(path).extension() {
             let ext_str = ext.to_string_lossy().to_lowercase();
             if suspicious_extensions.contains(&ext_str.as_ref()) {
                 return Err(crate::errors::ZthfsError::Security(format!(
-                    "Suspicious file extension: {}",
-                    ext_str
+                    "Suspicious file extension: {ext_str}"
                 )));
             }
         }

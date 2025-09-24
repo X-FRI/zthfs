@@ -27,16 +27,16 @@ pub enum ZthfsError {
 impl fmt::Display for ZthfsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ZthfsError::Crypto(msg) => write!(f, "Encryption/Decryption error: {}", msg),
-            ZthfsError::Fs(msg) => write!(f, "Filesystem error: {}", msg),
-            ZthfsError::Config(msg) => write!(f, "Configuration error: {}", msg),
-            ZthfsError::Integrity(msg) => write!(f, "Integrity verification error: {}", msg),
-            ZthfsError::Log(msg) => write!(f, "Logging error: {}", msg),
-            ZthfsError::Permission(msg) => write!(f, "Permission error: {}", msg),
-            ZthfsError::Path(msg) => write!(f, "Path error: {}", msg),
-            ZthfsError::Serialization(msg) => write!(f, "Serialization error: {}", msg),
-            ZthfsError::Security(msg) => write!(f, "Security error: {}", msg),
-            ZthfsError::Io(err) => write!(f, "I/O error: {}", err),
+            ZthfsError::Crypto(msg) => write!(f, "Encryption/Decryption error: {msg}"),
+            ZthfsError::Fs(msg) => write!(f, "Filesystem error: {msg}"),
+            ZthfsError::Config(msg) => write!(f, "Configuration error: {msg}"),
+            ZthfsError::Integrity(msg) => write!(f, "Integrity verification error: {msg}"),
+            ZthfsError::Log(msg) => write!(f, "Logging error: {msg}"),
+            ZthfsError::Permission(msg) => write!(f, "Permission error: {msg}"),
+            ZthfsError::Path(msg) => write!(f, "Path error: {msg}"),
+            ZthfsError::Serialization(msg) => write!(f, "Serialization error: {msg}"),
+            ZthfsError::Security(msg) => write!(f, "Security error: {msg}"),
+            ZthfsError::Io(err) => write!(f, "I/O error: {err}"),
         }
     }
 }

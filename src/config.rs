@@ -137,20 +137,20 @@ impl FilesystemConfig {
     pub fn from_file<P: AsRef<Path>>(path: P) -> ZthfsResult<Self> {
         let path = path.as_ref();
         let contents = std::fs::read_to_string(path)
-            .map_err(|e| ZthfsError::Config(format!("Failed to read config file: {}", e)))?;
+            .map_err(|e| ZthfsError::Config(format!("Failed to read config file: {e}")))?;
 
         serde_json::from_str(&contents)
-            .map_err(|e| ZthfsError::Config(format!("Failed to parse config: {}", e)))
+            .map_err(|e| ZthfsError::Config(format!("Failed to parse config: {e}")))
     }
 
     /// Save configuration to file
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> ZthfsResult<()> {
         let path = path.as_ref();
         let contents = serde_json::to_string_pretty(self)
-            .map_err(|e| ZthfsError::Config(format!("Failed to serialize config: {}", e)))?;
+            .map_err(|e| ZthfsError::Config(format!("Failed to serialize config: {e}")))?;
 
         std::fs::write(path, contents)
-            .map_err(|e| ZthfsError::Config(format!("Failed to write config file: {}", e)))
+            .map_err(|e| ZthfsError::Config(format!("Failed to write config file: {e}")))
     }
 
     /// Validate configuration

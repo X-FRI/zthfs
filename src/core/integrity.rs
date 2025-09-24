@@ -39,7 +39,7 @@ impl IntegrityHandler {
             Ok(None) => Ok(None),
             Err(e) => {
                 // If the file does not exist or for other reasons, ignore the error
-                log::debug!("Failed to read checksum xattr: {}", e);
+                log::debug!("Failed to read checksum xattr: {e}");
                 Ok(None)
             }
         }
@@ -59,7 +59,7 @@ impl IntegrityHandler {
         let checksum_bytes = checksum.to_le_bytes();
 
         xattr::set(real_path, &xattr_name, &checksum_bytes)
-            .map_err(|e| ZthfsError::Integrity(format!("Failed to set checksum xattr: {}", e)))?;
+            .map_err(|e| ZthfsError::Integrity(format!("Failed to set checksum xattr: {e}")))?;
 
         Ok(())
     }
@@ -75,7 +75,7 @@ impl IntegrityHandler {
             Ok(()) => Ok(()),
             Err(e) => {
                 // If the extended attribute does not exist, ignore the error
-                log::debug!("Failed to remove checksum xattr (may not exist): {}", e);
+                log::debug!("Failed to remove checksum xattr (may not exist): {e}");
                 Ok(())
             }
         }

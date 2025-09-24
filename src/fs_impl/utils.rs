@@ -5,7 +5,7 @@ pub struct FilesystemUtils;
 impl FilesystemUtils {
     /// Convert file mode to string representation
     pub fn mode_to_string(mode: u32) -> String {
-        format!("{:o}", mode)
+        format!("{mode:o}")
     }
 
     /// Check if a file mode indicates a directory

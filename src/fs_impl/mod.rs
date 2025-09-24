@@ -1,10 +1,10 @@
 use crate::config::FilesystemConfig;
 use crate::core::encryption::EncryptionHandler;
 use crate::core::integrity::IntegrityHandler;
-use crate::core::logging::{AccessLogEntry, LogHandler};
+use crate::core::logging::LogHandler;
 use crate::errors::ZthfsResult;
 use fuser::{
-    FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
+    Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
     ReplyEntry, ReplyWrite, Request,
 };
 use std::collections::HashMap;
@@ -76,7 +76,7 @@ impl Zthfs {
             .logger
             .log_access(operation, path, uid, gid, result, details)
         {
-            log::error!("Failed to log access: {}", e);
+            log::error!("Failed to log access: {e}");
         }
     }
 
@@ -111,7 +111,7 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::get_attr(&self, &path) {
+        match operations::FileSystemOperations::get_attr(self, &path) {
             Ok(attr) => {
                 self.logger
                     .log_access("lookup", &path.to_string_lossy(), uid, gid, "success", None)
@@ -120,7 +120,7 @@ impl Filesystem for Zthfs {
                 reply.entry(&TTL, &attr, 0);
             }
             Err(e) => {
-                let error_msg = format!("{}", e);
+                let error_msg = format!("{e}");
                 self.logger
                     .log_error(
                         "lookup",
@@ -156,7 +156,7 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::get_attr(&self, path) {
+        match operations::FileSystemOperations::get_attr(self, path) {
             Ok(attr) => {
                 self.logger
                     .log_access(
@@ -172,7 +172,7 @@ impl Filesystem for Zthfs {
                 reply.attr(&TTL, &attr);
             }
             Err(e) => {
-                let error_msg = format!("{}", e);
+                let error_msg = format!("{e}");
                 self.logger
                     .log_error(
                         "getattr",
@@ -220,7 +220,7 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::read_file(&self, path) {
+        match operations::FileSystemOperations::read_file(self, path) {
             Ok(data) => {
                 let start = offset as usize;
                 let end = std::cmp::min(start + size as usize, data.len());
@@ -239,7 +239,7 @@ impl Filesystem for Zthfs {
                 }
             }
             Err(e) => {
-                let error_msg = format!("{}", e);
+                let error_msg = format!("{e}");
                 self.logger
                     .log_error("read", &path.to_string_lossy(), uid, gid, &error_msg, None)
                     .unwrap_or(());
@@ -279,7 +279,7 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::write_file(&self, path, data) {
+        match operations::FileSystemOperations::write_file(self, path, data) {
             Ok(()) => {
                 self.logger
                     .log_access("write", &path.to_string_lossy(), uid, gid, "success", None)
@@ -288,7 +288,7 @@ impl Filesystem for Zthfs {
                 reply.written(data.len() as u32);
             }
             Err(e) => {
-                let error_msg = format!("{}", e);
+                let error_msg = format!("{e}");
                 self.logger
                     .log_error("write", &path.to_string_lossy(), uid, gid, &error_msg, None)
                     .unwrap_or(());
@@ -323,7 +323,7 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::read_dir(&self, path, offset, &mut reply) {
+        match operations::FileSystemOperations::read_dir(self, path, offset, &mut reply) {
             Ok(()) => {
                 self.logger
                     .log_access(
@@ -339,7 +339,7 @@ impl Filesystem for Zthfs {
                 reply.ok();
             }
             Err(e) => {
-                let error_msg = format!("{}", e);
+                let error_msg = format!("{e}");
                 self.logger
                     .log_error(
                         "readdir",
@@ -383,7 +383,7 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::create_file(&self, &path, mode) {
+        match operations::FileSystemOperations::create_file(self, &path, mode) {
             Ok(attr) => {
                 self.logger
                     .log_access("create", &path.to_string_lossy(), uid, gid, "success", None)
@@ -392,7 +392,7 @@ impl Filesystem for Zthfs {
                 reply.created(&TTL, &attr, 0, 0, 0);
             }
             Err(e) => {
-                let error_msg = format!("{}", e);
+                let error_msg = format!("{e}");
                 self.logger
                     .log_error(
                         "create",
@@ -428,7 +428,7 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::remove_file(&self, &path) {
+        match operations::FileSystemOperations::remove_file(self, &path) {
             Ok(()) => {
                 self.logger
                     .log_access("unlink", &path.to_string_lossy(), uid, gid, "success", None)
@@ -437,7 +437,7 @@ impl Filesystem for Zthfs {
                 reply.ok();
             }
             Err(e) => {
-                let error_msg = format!("{}", e);
+                let error_msg = format!("{e}");
                 self.logger
                     .log_error(
                         "unlink",

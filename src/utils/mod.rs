@@ -109,7 +109,7 @@ impl Utils {
         use base64::{Engine as _, engine::general_purpose};
         general_purpose::STANDARD
             .decode(data)
-            .map_err(|e| ZthfsError::Config(format!("Base64 decode error: {}", e)))
+            .map_err(|e| ZthfsError::Config(format!("Base64 decode error: {e}")))
     }
 
     pub fn is_debug_mode() -> bool {
@@ -127,7 +127,7 @@ impl Utils {
 
     pub fn current_dir() -> ZthfsResult<String> {
         std::env::current_dir()
-            .map_err(|e| ZthfsError::Path(format!("Failed to get current directory: {}", e)))
+            .map_err(|e| ZthfsError::Path(format!("Failed to get current directory: {e}")))
             .map(|p| p.to_string_lossy().to_string())
     }
 
@@ -141,8 +141,7 @@ impl Utils {
     pub fn copy_directory(src: &Path, dst: &Path) -> ZthfsResult<()> {
         if !src.exists() || !src.is_dir() {
             return Err(ZthfsError::Path(format!(
-                "Source directory does not exist: {:?}",
-                src
+                "Source directory does not exist: {src:?}"
             )));
         }
 

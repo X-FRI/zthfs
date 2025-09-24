@@ -157,7 +157,7 @@ impl LogHandler {
 
         let entry = StructuredLogEntry {
             timestamp: chrono::Utc::now().to_rfc3339(),
-            level: format!("{:?}", level).to_lowercase(),
+            level: format!("{level:?}").to_lowercase(),
             operation: operation.to_string(),
             path: path.to_string(),
             uid,
@@ -224,7 +224,7 @@ impl LogHandler {
             uid,
             gid,
             "success",
-            Some(format!("Operation completed in {}ms", duration_ms)),
+            Some(format!("Operation completed in {duration_ms}ms")),
             Some(duration_ms),
             file_size,
             checksum,
@@ -247,7 +247,7 @@ impl LogHandler {
         for log in logs {
             let json_line =
                 serde_json::to_string(log).map_err(|e| ZthfsError::Serialization(e.to_string()))?;
-            writeln!(writer, "{}", json_line)?;
+            writeln!(writer, "{json_line}")?;
         }
 
         writer.flush()?;
@@ -316,13 +316,12 @@ impl LogHandler {
 
     /// Flush all pending logs
     pub fn flush_all(&self) -> ZthfsResult<()> {
-        if let Ok(mut logs) = self.pending_logs.lock() {
-            if !logs.is_empty() {
+        if let Ok(mut logs) = self.pending_logs.lock()
+            && !logs.is_empty() {
                 let logs_to_write = logs.drain(..).collect::<Vec<_>>();
                 drop(logs);
                 self.flush_logs(&logs_to_write)?;
             }
-        }
         Ok(())
     }
 
@@ -355,7 +354,7 @@ impl LogHandler {
 impl Drop for LogHandler {
     fn drop(&mut self) {
         if let Err(e) = self.flush_all() {
-            log::error!("Failed to flush logs on drop: {}", e);
+            log::error!("Failed to flush logs on drop: {e}");
         }
     }
 }

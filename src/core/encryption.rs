@@ -1,6 +1,6 @@
 use crate::config::EncryptionConfig;
 use crate::errors::{ZthfsError, ZthfsResult};
-use aes_gcm::aead::{Aead, KeyInit, Nonce};
+use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key};
 use crc32c::crc32c;
 use generic_array::GenericArray;
@@ -32,11 +32,10 @@ impl EncryptionHandler {
     /// and then filling the result into a 12-byte array. To improve performance, the generated nonce is cached, and the same path request will return the cached result directly.
     pub fn generate_nonce(&self, path: &str) -> GenericArray<u8, U12> {
         // Check cache
-        if let Ok(cache) = self.nonce_cache.lock() {
-            if let Some(nonce) = cache.get(path) {
+        if let Ok(cache) = self.nonce_cache.lock()
+            && let Some(nonce) = cache.get(path) {
                 return *nonce;
             }
-        }
 
         // Generate new nonce
         let hash = crc32c(path.as_bytes()) ^ crc32c(&self.nonce_seed);
@@ -44,7 +43,7 @@ impl EncryptionHandler {
         nonce_bytes[..4].copy_from_slice(&hash.to_le_bytes());
         nonce_bytes[4..8].copy_from_slice(&hash.to_le_bytes());
         // Use low 4 bits of hash to fill last 4 bytes
-        nonce_bytes[8..12].copy_from_slice(&(hash as u32).to_le_bytes());
+        nonce_bytes[8..12].copy_from_slice(&hash.to_le_bytes());
         let nonce = GenericArray::from(nonce_bytes);
 
         // Cache nonce
@@ -60,7 +59,7 @@ impl EncryptionHandler {
         let ciphertext = self
             .cipher
             .encrypt(&nonce, data)
-            .map_err(|e| ZthfsError::Crypto(format!("Encryption failed: {:?}", e)))?;
+            .map_err(|e| ZthfsError::Crypto(format!("Encryption failed: {e:?}")))?;
         Ok(ciphertext)
     }
 
@@ -69,7 +68,7 @@ impl EncryptionHandler {
         let plaintext = self
             .cipher
             .decrypt(&nonce, data)
-            .map_err(|e| ZthfsError::Crypto(format!("Decryption failed: {:?}", e)))?;
+            .map_err(|e| ZthfsError::Crypto(format!("Decryption failed: {e:?}")))?;
         Ok(plaintext)
     }
 
