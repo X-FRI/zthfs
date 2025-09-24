@@ -18,12 +18,12 @@ graph TD
     subgraph FUSE Layer
         B[ZTHFS]
         subgraph Core Modules
-            B1[Encryption (AES-256-GCM and Nonce Cache)]
-            B2[Integrity (CRC32c and Chunked Verification)]
-            B3[Logging Structured JSON Logs]
+            B1["Encryption<br/>(AES-256-GCM + Nonce Cache)"]
+            B2["Integrity<br/>(CRC32c + Chunked Verification)"]
+            B3["Logging<br/>(Structured JSON Logs)"]
         end
         subgraph Storage Engine
-            B4[Chunked File System (4MB Chunks and Metadata)]
+            B4["Chunked File System<br/>(4MB Chunks and Metadata)"]
         end
         B --> B1
         B --> B2
@@ -36,7 +36,7 @@ graph TD
     end
 
     subgraph Storage Layer
-        D[Chunked Encrypted Storage (Independent Encryption and Integrity)]
+        D["Chunked Encrypted Storage<br/>(Independent Encryption and Integrity)"]
     end
 
     A -- requests --> B
