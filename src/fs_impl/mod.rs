@@ -3,14 +3,14 @@ use crate::core::encryption::EncryptionHandler;
 use crate::core::integrity::IntegrityHandler;
 use crate::core::logging::LogHandler;
 use crate::errors::ZthfsResult;
+use dashmap::DashMap;
 use fuser::{
     Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry,
     ReplyWrite, Request,
 };
-use std::collections::HashMap;
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 pub mod operations;
@@ -24,8 +24,8 @@ pub struct Zthfs {
     data_dir: PathBuf,
     encryption: EncryptionHandler,
     logger: Arc<LogHandler>,
-    /// inode to actual file path mapping
-    inodes: Mutex<HashMap<u64, PathBuf>>,
+    /// inode to actual file path mapping (using DashMap for better concurrency)
+    inodes: Arc<DashMap<u64, PathBuf>>,
 }
 
 impl Zthfs {
@@ -50,7 +50,7 @@ impl Zthfs {
             data_dir: PathBuf::from(config.data_dir.clone()),
             encryption,
             logger,
-            inodes: Mutex::new(HashMap::new()),
+            inodes: Arc::new(DashMap::new()),
         })
     }
 
@@ -87,10 +87,32 @@ impl Zthfs {
 impl Filesystem for Zthfs {
     /// When the file system client needs to find a file or directory under the parent directory, it is called.
     fn lookup(&mut self, _req: &Request, _parent: u64, name: &OsStr, reply: ReplyEntry) {
-        // Build the virtual path based on name.
-        let path = Path::new("/").join(name);
         let uid = _req.uid();
         let gid = _req.gid();
+
+        // Get the parent path from inode
+        let parent_path = {
+            match self.inodes.get(&_parent) {
+                Some(path) => path.clone(),
+                None => {
+                    self.logger
+                        .log_error(
+                            "lookup",
+                            "unknown_parent_inode",
+                            uid,
+                            gid,
+                            "Invalid parent inode",
+                            None,
+                        )
+                        .unwrap_or(());
+                    reply.error(libc::ENOENT);
+                    return;
+                }
+            }
+        };
+
+        // Build the virtual path based on parent and name
+        let path = parent_path.join(name);
 
         // Execute check_permission for permission check. If permission is insufficient, log and return EACCES error.
         if !self.check_permission(uid, gid) {
@@ -134,9 +156,22 @@ impl Filesystem for Zthfs {
 
     /// Get the attributes of the specified inode (file or directory).
     fn getattr(&mut self, _req: &Request, _ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
-        let path = Path::new("/");
         let uid = _req.uid();
         let gid = _req.gid();
+
+        // Get the actual path from inode
+        let path = {
+            match self.inodes.get(&_ino) {
+                Some(path) => path.clone(),
+                None => {
+                    self.logger
+                        .log_error("getattr", "unknown_inode", uid, gid, "Invalid inode", None)
+                        .unwrap_or(());
+                    reply.error(libc::ENOENT);
+                    return;
+                }
+            }
+        };
 
         if !self.check_permission(uid, gid) {
             self.log_access(
@@ -151,7 +186,7 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::get_attr(self, path) {
+        match operations::FileSystemOperations::get_attr(self, &path) {
             Ok(attr) => {
                 self.logger
                     .log_access(
@@ -195,11 +230,22 @@ impl Filesystem for Zthfs {
         _lock_owner: Option<u64>,
         reply: ReplyData,
     ) {
-        // TODO: Simplified handling: here we need to map the inode to the path
-        // TODO: Use the root directory as an example
-        let path = Path::new("/test.txt"); // 示例文件
         let uid = _req.uid();
         let gid = _req.gid();
+
+        // Get the actual path from inode
+        let path = {
+            match self.inodes.get(&_ino) {
+                Some(path) => path.clone(),
+                None => {
+                    self.logger
+                        .log_error("read", "unknown_inode", uid, gid, "Invalid inode", None)
+                        .unwrap_or(());
+                    reply.error(libc::ENOENT);
+                    return;
+                }
+            }
+        };
 
         // Execute check_permission for permission check. If permission is insufficient, log and return EACCES error.
         if !self.check_permission(uid, gid) {
@@ -215,23 +261,19 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::read_file(self, path) {
+        match operations::FileSystemOperations::read_partial_chunked(self, &path, offset, size) {
             Ok(data) => {
-                let start = offset as usize;
-                let end = std::cmp::min(start + size as usize, data.len());
-                if start >= data.len() {
+                if data.is_empty() {
                     self.logger
                         .log_access("read", &path.to_string_lossy(), uid, gid, "eof", None)
                         .unwrap_or(());
-
-                    reply.data(&[]);
                 } else {
                     self.logger
                         .log_access("read", &path.to_string_lossy(), uid, gid, "success", None)
                         .unwrap_or(());
-
-                    reply.data(&data[start..end]);
                 }
+
+                reply.data(&data);
             }
             Err(e) => {
                 let error_msg = format!("{e}");
@@ -256,10 +298,22 @@ impl Filesystem for Zthfs {
         _lock_owner: Option<u64>,
         reply: ReplyWrite,
     ) {
-        // TODO: Simplified handling: write to a test file for now
-        let path = Path::new("/test.txt");
         let uid = _req.uid();
         let gid = _req.gid();
+
+        // Get the actual path from inode
+        let path = {
+            match self.inodes.get(&_ino) {
+                Some(path) => path.clone(),
+                None => {
+                    self.logger
+                        .log_error("write", "unknown_inode", uid, gid, "Invalid inode", None)
+                        .unwrap_or(());
+                    reply.error(libc::ENOENT);
+                    return;
+                }
+            }
+        };
 
         if !self.check_permission(uid, gid) {
             self.log_access(
@@ -274,7 +328,9 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::write_file(self, path, data) {
+        // TODO: For now, implement as full file write. Partial writes would require
+        // more complex chunked write implementation with offset support.
+        match operations::FileSystemOperations::write_file(self, &path, data) {
             Ok(()) => {
                 self.logger
                     .log_access("write", &path.to_string_lossy(), uid, gid, "success", None)
@@ -301,9 +357,22 @@ impl Filesystem for Zthfs {
         offset: i64,
         mut reply: ReplyDirectory,
     ) {
-        let path = Path::new("/");
         let uid = _req.uid();
         let gid = _req.gid();
+
+        // Get the actual path from inode
+        let path = {
+            match self.inodes.get(&_ino) {
+                Some(path) => path.clone(),
+                None => {
+                    self.logger
+                        .log_error("readdir", "unknown_inode", uid, gid, "Invalid inode", None)
+                        .unwrap_or(());
+                    reply.error(libc::ENOENT);
+                    return;
+                }
+            }
+        };
 
         if !self.check_permission(uid, gid) {
             self.log_access(
@@ -318,7 +387,7 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::read_dir(self, path, offset, &mut reply) {
+        match operations::FileSystemOperations::read_dir(self, &path, offset, &mut reply) {
             Ok(()) => {
                 self.logger
                     .log_access(
@@ -361,9 +430,32 @@ impl Filesystem for Zthfs {
         _flags: i32,
         reply: ReplyCreate,
     ) {
-        let path = Path::new("/").join(name);
         let uid = _req.uid();
         let gid = _req.gid();
+
+        // Get the parent path from inode
+        let parent_path = {
+            match self.inodes.get(&_parent) {
+                Some(path) => path.clone(),
+                None => {
+                    self.logger
+                        .log_error(
+                            "create",
+                            "unknown_parent_inode",
+                            uid,
+                            gid,
+                            "Invalid parent inode",
+                            None,
+                        )
+                        .unwrap_or(());
+                    reply.error(libc::ENOENT);
+                    return;
+                }
+            }
+        };
+
+        // Build the path for the new file
+        let path = parent_path.join(name);
 
         if !self.check_permission(uid, gid) {
             self.log_access(
@@ -405,9 +497,32 @@ impl Filesystem for Zthfs {
     }
 
     fn unlink(&mut self, _req: &Request, _parent: u64, name: &OsStr, reply: ReplyEmpty) {
-        let path = Path::new("/").join(name);
         let uid = _req.uid();
         let gid = _req.gid();
+
+        // Get the parent path from inode
+        let parent_path = {
+            match self.inodes.get(&_parent) {
+                Some(path) => path.clone(),
+                None => {
+                    self.logger
+                        .log_error(
+                            "unlink",
+                            "unknown_parent_inode",
+                            uid,
+                            gid,
+                            "Invalid parent inode",
+                            None,
+                        )
+                        .unwrap_or(());
+                    reply.error(libc::ENOENT);
+                    return;
+                }
+            }
+        };
+
+        // Build the path for the file to be removed
+        let path = parent_path.join(name);
 
         // 权限检查
         if !self.check_permission(uid, gid) {

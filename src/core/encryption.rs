@@ -3,15 +3,15 @@ use crate::errors::{ZthfsError, ZthfsResult};
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key};
 use crc32c::crc32c;
+use dashmap::DashMap;
 use generic_array::GenericArray;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use typenum::U12;
 
 pub struct EncryptionHandler {
     cipher: Aes256Gcm,
     nonce_seed: Vec<u8>,
-    nonce_cache: Arc<Mutex<HashMap<String, GenericArray<u8, U12>>>>,
+    nonce_cache: Arc<DashMap<String, GenericArray<u8, U12>>>,
 }
 
 impl EncryptionHandler {
@@ -23,7 +23,7 @@ impl EncryptionHandler {
         Self {
             cipher,
             nonce_seed: config.nonce_seed.clone(),
-            nonce_cache: Arc::new(Mutex::new(HashMap::new())),
+            nonce_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -32,9 +32,7 @@ impl EncryptionHandler {
     /// and then filling the result into a 12-byte array. To improve performance, the generated nonce is cached, and the same path request will return the cached result directly.
     pub fn generate_nonce(&self, path: &str) -> GenericArray<u8, U12> {
         // Check cache
-        if let Ok(cache) = self.nonce_cache.lock()
-            && let Some(nonce) = cache.get(path)
-        {
+        if let Some(nonce) = self.nonce_cache.get(path) {
             return *nonce;
         }
 
@@ -48,9 +46,7 @@ impl EncryptionHandler {
         let nonce = GenericArray::from(nonce_bytes);
 
         // Cache nonce
-        if let Ok(mut cache) = self.nonce_cache.lock() {
-            cache.insert(path.to_string(), nonce);
-        }
+        self.nonce_cache.insert(path.to_string(), nonce);
 
         nonce
     }
