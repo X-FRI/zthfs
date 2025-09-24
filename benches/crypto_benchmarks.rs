@@ -1,4 +1,4 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use zthfs::{config::EncryptionConfig, core::encryption::EncryptionHandler};
 
 fn bench_encrypt_1kb(c: &mut Criterion) {
@@ -10,7 +10,7 @@ fn bench_encrypt_1kb(c: &mut Criterion) {
 
     c.bench_function("encrypt_1kb", |b| {
         b.iter(|| {
-            let _ = encryptor.encrypt(black_box(&data), black_box(path));
+            let _ = encryptor.encrypt(std::hint::black_box(&data), std::hint::black_box(path));
         })
     });
 }
@@ -26,7 +26,7 @@ fn bench_decrypt_1kb(c: &mut Criterion) {
 
     c.bench_function("decrypt_1kb", |b| {
         b.iter(|| {
-            let _ = encryptor.decrypt(black_box(&encrypted), black_box(path));
+            let _ = encryptor.decrypt(std::hint::black_box(&encrypted), std::hint::black_box(path));
         })
     });
 }
@@ -40,7 +40,7 @@ fn bench_encrypt_1mb(c: &mut Criterion) {
 
     c.bench_function("encrypt_1mb", |b| {
         b.iter(|| {
-            let _ = encryptor.encrypt(black_box(&data), black_box(path));
+            let _ = encryptor.encrypt(std::hint::black_box(&data), std::hint::black_box(path));
         })
     });
 }
@@ -56,7 +56,7 @@ fn bench_decrypt_1mb(c: &mut Criterion) {
 
     c.bench_function("decrypt_1mb", |b| {
         b.iter(|| {
-            let _ = encryptor.decrypt(black_box(&encrypted), black_box(path));
+            let _ = encryptor.decrypt(std::hint::black_box(&encrypted), std::hint::black_box(path));
         })
     });
 }
@@ -69,7 +69,7 @@ fn bench_nonce_generation(c: &mut Criterion) {
 
     c.bench_function("nonce_generation", |b| {
         b.iter(|| {
-            let _ = encryptor.generate_nonce(black_box(path));
+            let _ = encryptor.generate_nonce(std::hint::black_box(path));
         })
     });
 }

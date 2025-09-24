@@ -1,4 +1,4 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use zthfs::core::integrity::IntegrityHandler;
 
 fn bench_checksum_computation_1kb(c: &mut Criterion) {
@@ -6,7 +6,7 @@ fn bench_checksum_computation_1kb(c: &mut Criterion) {
 
     c.bench_function("checksum_computation_1kb", |b| {
         b.iter(|| {
-            let _ = IntegrityHandler::compute_checksum(black_box(&data));
+            let _ = IntegrityHandler::compute_checksum(std::hint::black_box(&data));
         })
     });
 }
@@ -16,7 +16,7 @@ fn bench_checksum_computation_1mb(c: &mut Criterion) {
 
     c.bench_function("checksum_computation_1mb", |b| {
         b.iter(|| {
-            let _ = IntegrityHandler::compute_checksum(black_box(&data));
+            let _ = IntegrityHandler::compute_checksum(std::hint::black_box(&data));
         })
     });
 }
@@ -27,7 +27,10 @@ fn bench_integrity_verification_1kb(c: &mut Criterion) {
 
     c.bench_function("integrity_verification_1kb", |b| {
         b.iter(|| {
-            let _ = IntegrityHandler::verify_integrity(black_box(&data), black_box(checksum));
+            let _ = IntegrityHandler::verify_integrity(
+                std::hint::black_box(&data),
+                std::hint::black_box(checksum),
+            );
         })
     });
 }
@@ -38,7 +41,10 @@ fn bench_integrity_verification_1mb(c: &mut Criterion) {
 
     c.bench_function("integrity_verification_1mb", |b| {
         b.iter(|| {
-            let _ = IntegrityHandler::verify_integrity(black_box(&data), black_box(checksum));
+            let _ = IntegrityHandler::verify_integrity(
+                std::hint::black_box(&data),
+                std::hint::black_box(checksum),
+            );
         })
     });
 }

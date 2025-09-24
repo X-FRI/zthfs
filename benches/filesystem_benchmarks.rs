@@ -1,4 +1,4 @@
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use std::path::Path;
 use tempfile::tempdir;
 use zthfs::{
@@ -42,7 +42,10 @@ fn bench_file_read_1kb(c: &mut Criterion) {
 
     c.bench_function("file_read_1kb", |b| {
         b.iter(|| {
-            let _ = FileSystemOperations::read_file(black_box(&fs), black_box(test_path));
+            let _ = FileSystemOperations::read_file(
+                std::hint::black_box(&fs),
+                std::hint::black_box(test_path),
+            );
         })
     });
 }
@@ -56,9 +59,9 @@ fn bench_file_write_1kb(c: &mut Criterion) {
     c.bench_function("file_write_1kb", |b| {
         b.iter(|| {
             let _ = FileSystemOperations::write_file(
-                black_box(&fs),
-                black_box(test_path),
-                black_box(&test_data),
+                std::hint::black_box(&fs),
+                std::hint::black_box(test_path),
+                std::hint::black_box(&test_data),
             );
         })
     });
@@ -75,7 +78,10 @@ fn bench_file_read_1mb(c: &mut Criterion) {
 
     c.bench_function("file_read_1mb", |b| {
         b.iter(|| {
-            let _ = FileSystemOperations::read_file(black_box(&fs), black_box(test_path));
+            let _ = FileSystemOperations::read_file(
+                std::hint::black_box(&fs),
+                std::hint::black_box(test_path),
+            );
         })
     });
 }
@@ -89,24 +95,44 @@ fn bench_file_write_1mb(c: &mut Criterion) {
     c.bench_function("file_write_1mb", |b| {
         b.iter(|| {
             let _ = FileSystemOperations::write_file(
-                black_box(&fs),
-                black_box(test_path),
-                black_box(&test_data),
+                std::hint::black_box(&fs),
+                std::hint::black_box(test_path),
+                std::hint::black_box(&test_data),
             );
         })
     });
 }
 
-fn bench_get_file_size(c: &mut Criterion) {
+fn bench_get_file_size_1kb(c: &mut Criterion) {
     let (fs, _temp_dir) = create_test_filesystem();
 
     let test_path = Path::new("/test_size.txt");
     let test_data = vec![0u8; 1024]; // 1KB of data
     FileSystemOperations::write_file(&fs, test_path, &test_data).unwrap();
 
-    c.bench_function("get_file_size", |b| {
+    c.bench_function("get_file_size_1kb", |b| {
         b.iter(|| {
-            let _ = FileSystemOperations::get_file_size(black_box(&fs), black_box(test_path));
+            let _ = FileSystemOperations::get_file_size(
+                std::hint::black_box(&fs),
+                std::hint::black_box(test_path),
+            );
+        })
+    });
+}
+
+fn bench_get_file_size_10mb(c: &mut Criterion) {
+    let (fs, _temp_dir) = create_test_filesystem();
+
+    let test_path = Path::new("/test_size.txt");
+    let test_data = vec![0u8; 1024 * 1024 * 10]; // 10MB of data
+    FileSystemOperations::write_file(&fs, test_path, &test_data).unwrap();
+
+    c.bench_function("get_file_size_10mb", |b| {
+        b.iter(|| {
+            let _ = FileSystemOperations::get_file_size(
+                std::hint::black_box(&fs),
+                std::hint::black_box(test_path),
+            );
         })
     });
 }
@@ -120,7 +146,10 @@ fn bench_path_exists_check(c: &mut Criterion) {
 
     c.bench_function("path_exists_check", |b| {
         b.iter(|| {
-            let _ = FileSystemOperations::path_exists(black_box(&fs), black_box(test_path));
+            let _ = FileSystemOperations::path_exists(
+                std::hint::black_box(&fs),
+                std::hint::black_box(test_path),
+            );
         })
     });
 }
@@ -131,7 +160,8 @@ criterion_group!(
     bench_file_write_1kb,
     bench_file_read_1mb,
     bench_file_write_1mb,
-    bench_get_file_size,
+    bench_get_file_size_1kb,
+    bench_get_file_size_10mb,
     bench_path_exists_check
 );
 

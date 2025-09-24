@@ -257,27 +257,27 @@ let is_valid = IntegrityHandler::verify_integrity(&encrypted, checksum);
 
 ## Performance Metrics
 
-### Benchmark Results (v2.0 - Post Chunking & Concurrency Optimization)
+### Benchmark Results (v3.0 - Updated Dependencies & Optimizations)
 
 ```
-Encryption Performance (DashMap + Chunked Storage):
-- 1KB encrypt/decrypt: 666ns / 648ns (+2.6% / +0.8%)
-- 1MB encrypt/decrypt: 575μs / 600μs (-7.6% / +2.2%)
-- Nonce generation: 26.4ns (Cache hit rate: ~99%)
+Encryption Performance (AES-256-GCM + DashMap Cache):
+- 1KB encrypt/decrypt: 639ns / 638ns (-4.0% / -1.6% improvement)
+- 1MB encrypt/decrypt: 581μs / 611μs (+1.0% / +1.9% regression)
+- Nonce generation: 15.4ns (-41.7% improvement, Cache hit rate: ~99%)
 
-Integrity Verification (Per-Chunk Verification):
-- Checksum computation (1KB): 126ns (0% change)
-- Checksum computation (1MB): 119μs (-0.8% improvement)
-- Integrity verification (1KB): 127ns (+0.8%)
-- Integrity verification (1MB): 119μs (-1.7% improvement)
+Integrity Verification (CRC32c + Extended Attributes):
+- Checksum computation (1KB): 132ns (+4.8% regression)
+- Checksum computation (1MB): 129μs (+8.4% regression)
+- Integrity verification (1KB): 133ns (+4.7% regression)
+- Integrity verification (1MB): 128μs (+7.6% regression)
 
-Filesystem Operations (Chunked + Concurrent):
-- File read (1KB): 7.09μs (+32% - chunking overhead)
-- File write (1KB): 10.11μs (+5.6% - chunking detection)
-- File read (1MB): 1.62ms (+13% - optimized for large files)
-- File write (1MB): 1.08ms (+4.9% - chunked writing)
-- Get file size: 2.74μs (+184% - metadata resolution)
-- Path exists check: 2.72μs (+167% - chunked file detection)
+Filesystem Operations (Chunked Storage + FUSE Integration):
+- File read (1KB): 7.06μs (-0.4% improvement)
+- File write (1KB): 9.53μs (-5.8% improvement)
+- File read (1MB): 1.35ms (-16.7% improvement)
+- File write (1MB): 1.01ms (-6.5% improvement)
+- Get file size: 8.91μs (+225% regression - data decryption overhead)
+- Path exists check: 2.75μs (+1.1% regression)
 
 Concurrent Performance Improvements:
 - Encryption cache access: ~10x faster under contention
@@ -285,16 +285,17 @@ Concurrent Performance Improvements:
 - Memory efficiency: ~75% reduction for large file operations
 ```
 
-### Resource Usage (v2.0 - Optimized)
+### Resource Usage
 
-- **Memory Usage**: Basic usage ~15MB, peak ~50MB (75% reduction for large files)
-- **CPU Usage**: <1% idle, <15% under load (improved cache efficiency)
+- **Memory Usage**: Basic usage ~15MB, peak ~50MB (75% reduction for large file operations)
+- **CPU Usage**: <1% idle, <15% under load (improved cache efficiency with updated rand)
 - **Storage Overhead**: Encryption overhead ~10%, logging overhead ~5%, chunking overhead ~2%
 - **Concurrent Performance**: Supports 5000+ concurrent operations (DashMap optimization)
 - **Large File Efficiency**: Files >4MB automatically chunked, reducing memory usage by ~75%
 - **Cache Performance**: Nonce cache hit rate ~99%, encryption cache ~10x faster under contention
+- **Dependency Updates**: Updated rand (0.9.2), generic_array handling, and criterion (0.7.0)
 
-## Performance Tuning (v2.0 - Advanced Optimizations)
+## Performance Tuning
 
 ### Benchmark Configuration
 

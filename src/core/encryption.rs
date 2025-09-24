@@ -1,10 +1,9 @@
 use crate::config::EncryptionConfig;
 use crate::errors::{ZthfsError, ZthfsResult};
-use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::aead::{Aead, KeyInit, generic_array::GenericArray};
 use aes_gcm::{Aes256Gcm, Key};
 use crc32c::crc32c;
 use dashmap::DashMap;
-use generic_array::GenericArray;
 use std::sync::Arc;
 use typenum::U12;
 
@@ -88,7 +87,7 @@ impl EncryptionHandler {
     pub fn generate_key() -> [u8; 32] {
         use rand::RngCore;
         let mut key = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut key);
+        rand::rng().fill_bytes(&mut key);
         key
     }
 
@@ -96,7 +95,7 @@ impl EncryptionHandler {
     pub fn generate_nonce_seed() -> [u8; 12] {
         use rand::RngCore;
         let mut seed = [0u8; 12];
-        rand::thread_rng().fill_bytes(&mut seed);
+        rand::rng().fill_bytes(&mut seed);
         seed
     }
 }

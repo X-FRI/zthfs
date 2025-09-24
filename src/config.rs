@@ -15,8 +15,8 @@ impl Default for EncryptionConfig {
         use rand::RngCore;
         let mut key = vec![0u8; 32];
         let mut nonce_seed = vec![0u8; 12];
-        rand::thread_rng().fill_bytes(&mut key);
-        rand::thread_rng().fill_bytes(&mut nonce_seed);
+        rand::rng().fill_bytes(&mut key);
+        rand::rng().fill_bytes(&mut nonce_seed);
         Self { key, nonce_seed }
     }
 }
