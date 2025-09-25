@@ -10,14 +10,55 @@ pub struct EncryptionConfig {
     pub nonce_seed: Vec<u8>,
 }
 
-impl Default for EncryptionConfig {
-    fn default() -> Self {
+impl EncryptionConfig {
+    /// Create a new EncryptionConfig with the specified key and nonce seed
+    pub fn new(key: Vec<u8>, nonce_seed: Vec<u8>) -> Self {
+        Self { key, nonce_seed }
+    }
+
+    /// Create a new EncryptionConfig with randomly generated key and nonce seed
+    /// WARNING: This should only be used for testing or development.
+    /// In production, always use persistent keys.
+    pub fn with_random_keys() -> Self {
         use rand::RngCore;
         let mut key = vec![0u8; 32];
         let mut nonce_seed = vec![0u8; 12];
         rand::rng().fill_bytes(&mut key);
         rand::rng().fill_bytes(&mut nonce_seed);
         Self { key, nonce_seed }
+    }
+
+    /// Generate a random encryption key
+    pub fn generate_key() -> [u8; 32] {
+        use rand::RngCore;
+        let mut key = [0u8; 32];
+        rand::rng().fill_bytes(&mut key);
+        key
+    }
+
+    /// Generate a random nonce seed
+    pub fn generate_nonce_seed() -> [u8; 12] {
+        use rand::RngCore;
+        let mut seed = [0u8; 12];
+        rand::rng().fill_bytes(&mut seed);
+        seed
+    }
+}
+
+impl Default for EncryptionConfig {
+    /// Default configuration with placeholder values.
+    /// WARNING: This default configuration contains insecure placeholder values
+    /// and should NEVER be used in production. Always provide explicit keys.
+    fn default() -> Self {
+        // Use clearly insecure placeholder values to prevent accidental use
+        // These are obviously not random and will be easily detectable
+        let key = [0xDE, 0xAD, 0xBE, 0xEF].repeat(8); // Repeating pattern: DEADBEEF...
+        let nonce_seed = [0xBA, 0xDC, 0x0F, 0xFE].repeat(3); // Repeating pattern: BADCOFFE...
+
+        Self {
+            key: key.to_vec(),
+            nonce_seed: nonce_seed.to_vec(),
+        }
     }
 }
 
@@ -192,6 +233,10 @@ impl FilesystemConfig {
                 "Log file path cannot be empty when logging is enabled".to_string(),
             ));
         }
+
+        // Validate integrity configuration
+        use crate::core::integrity::IntegrityHandler;
+        IntegrityHandler::validate_config(&self.integrity)?;
 
         Ok(())
     }
