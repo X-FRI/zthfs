@@ -3,6 +3,7 @@ use crate::core::encryption::EncryptionHandler;
 use crate::core::integrity::IntegrityHandler;
 use crate::core::logging::LogHandler;
 use crate::errors::ZthfsResult;
+use crate::fs_impl::security::{FileAccess, SecurityValidator};
 use dashmap::DashMap;
 use fuser::{
     Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry,
@@ -24,6 +25,7 @@ pub struct Zthfs {
     data_dir: PathBuf,
     encryption: EncryptionHandler,
     logger: Arc<LogHandler>,
+    security_validator: SecurityValidator,
     /// inode to actual file path mapping (using DashMap for better concurrency)
     inodes: Arc<DashMap<u64, PathBuf>>,
 }
@@ -44,12 +46,14 @@ impl Zthfs {
 
         let encryption = EncryptionHandler::new(&config.encryption);
         let logger = Arc::new(LogHandler::new(&config.logging)?);
+        let security_validator = SecurityValidator::new(config.security.clone());
 
         Ok(Self {
             config: config.clone(),
             data_dir: PathBuf::from(config.data_dir.clone()),
             encryption,
             logger,
+            security_validator,
             inodes: Arc::new(DashMap::new()),
         })
     }
@@ -77,10 +81,28 @@ impl Zthfs {
 
     /// Check if the given user ID (UID) and group ID (GID) have access to the file system.
     /// Check based on the allowed_users and allowed_groups lists in config.security.
-    /// TODO: The logic here may be able to be strengthened
     pub fn check_permission(&self, uid: u32, gid: u32) -> bool {
         self.config.security.allowed_users.contains(&uid)
             || self.config.security.allowed_groups.contains(&gid)
+    }
+
+    /// Check detailed file permissions including POSIX-style access control
+    /// This provides more granular permission checking for different operations
+    pub fn check_file_access(
+        &self,
+        uid: u32,
+        gid: u32,
+        access: FileAccess,
+        file_mode: Option<u32>,
+    ) -> bool {
+        // Use the security validator for detailed permission checking
+        if let Some(mode) = file_mode {
+            self.security_validator
+                .check_file_permission(uid, gid, mode, access)
+        } else {
+            // Fall back to basic permission check if no file mode available
+            self.check_permission(uid, gid)
+        }
     }
 }
 
@@ -247,15 +269,15 @@ impl Filesystem for Zthfs {
             }
         };
 
-        // Execute check_permission for permission check. If permission is insufficient, log and return EACCES error.
-        if !self.check_permission(uid, gid) {
+        // Check read permissions
+        if !self.check_file_access(uid, gid, FileAccess::Read, None) {
             self.log_access(
                 "read",
                 &path.to_string_lossy(),
                 uid,
                 gid,
                 "permission_denied",
-                Some("User not authorized".to_string()),
+                Some("Read access denied".to_string()),
             );
             reply.error(libc::EACCES);
             return;
@@ -315,14 +337,15 @@ impl Filesystem for Zthfs {
             }
         };
 
-        if !self.check_permission(uid, gid) {
+        // Check write permissions
+        if !self.check_file_access(uid, gid, FileAccess::Write, None) {
             self.log_access(
                 "write",
                 &path.to_string_lossy(),
                 uid,
                 gid,
                 "permission_denied",
-                Some("User not authorized".to_string()),
+                Some("Write access denied".to_string()),
             );
             reply.error(libc::EACCES);
             return;

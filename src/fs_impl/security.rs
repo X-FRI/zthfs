@@ -4,6 +4,13 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileAccess {
+    Read,
+    Write,
+    Execute,
+}
+
 #[derive(Debug, Clone)]
 pub enum SecurityEvent {
     AuthenticationFailure {
@@ -195,6 +202,44 @@ impl SecurityValidator {
         matches!(operation, "write" | "delete") && self.is_user_locked(uid)
     }
 
+    /// Check POSIX-style file permissions
+    /// Returns true if the user has the requested access to the file
+    pub fn check_file_permission(
+        &self,
+        uid: u32,
+        gid: u32,
+        file_mode: u32,
+        requested_access: FileAccess,
+    ) -> bool {
+        // First check if user is in allowed users/groups list (filesystem-level access control)
+        if !self.config.allowed_users.contains(&uid) && !self.config.allowed_groups.contains(&gid) {
+            return false;
+        }
+
+        // Extract permission bits from file mode
+        let owner_perms = (file_mode >> 6) & 0o7;
+        let _group_perms = (file_mode >> 3) & 0o7;
+        let _other_perms = file_mode & 0o7;
+
+        // Determine which permission set to use
+        let effective_perms = if uid == 0 {
+            // Root has full access
+            0o7
+        } else {
+            // Check ownership and apply appropriate permissions
+            // TODO: For simplicity, we'll assume the file owner/group matches the process owner/group
+            // In a real implementation, you'd get this from file metadata
+            owner_perms // Default to owner permissions for now
+        };
+
+        // Check if requested access is allowed
+        match requested_access {
+            FileAccess::Read => (effective_perms & 0o4) != 0,
+            FileAccess::Write => (effective_perms & 0o2) != 0,
+            FileAccess::Execute => (effective_perms & 0o1) != 0,
+        }
+    }
+
     /// Validate file path for security
     pub fn validate_secure_path(&self, path: &str) -> ZthfsResult<()> {
         // Check for path traversal attempts
@@ -221,5 +266,99 @@ impl SecurityValidator {
     /// Get security configuration
     pub fn config(&self) -> &SecurityConfig {
         &self.config
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::SecurityConfig;
+
+    fn create_test_validator() -> SecurityValidator {
+        let config = SecurityConfig {
+            allowed_users: vec![1000, 0],
+            allowed_groups: vec![1000, 0],
+            encryption_strength: "high".to_string(),
+            access_control_level: "strict".to_string(),
+        };
+        SecurityValidator::new(config)
+    }
+
+    #[test]
+    fn test_file_permission_read_access() {
+        let validator = create_test_validator();
+
+        // Test read access with different file modes
+        assert!(validator.check_file_permission(1000, 1000, 0o644, FileAccess::Read)); // rw-r--r--
+        assert!(validator.check_file_permission(1000, 1000, 0o600, FileAccess::Read)); // rw-------
+        assert!(!validator.check_file_permission(1000, 1000, 0o244, FileAccess::Read)); // -w-r--r--
+    }
+
+    #[test]
+    fn test_file_permission_write_access() {
+        let validator = create_test_validator();
+
+        // Test write access with different file modes
+        assert!(validator.check_file_permission(1000, 1000, 0o644, FileAccess::Write)); // rw-r--r--
+        assert!(validator.check_file_permission(1000, 1000, 0o622, FileAccess::Write)); // rw--w--w-
+        assert!(!validator.check_file_permission(1000, 1000, 0o444, FileAccess::Write)); // r--r--r--
+    }
+
+    #[test]
+    fn test_file_permission_execute_access() {
+        let validator = create_test_validator();
+
+        // Test execute access with different file modes
+        assert!(validator.check_file_permission(1000, 1000, 0o755, FileAccess::Execute)); // rwxr-xr-x
+        assert!(!validator.check_file_permission(1000, 1000, 0o644, FileAccess::Execute)); // rw-r--r--
+    }
+
+    #[test]
+    fn test_root_access() {
+        let validator = create_test_validator();
+
+        // Root (uid 0) should have full access regardless of file permissions
+        assert!(validator.check_file_permission(0, 0, 0o000, FileAccess::Read));
+        assert!(validator.check_file_permission(0, 0, 0o000, FileAccess::Write));
+        assert!(validator.check_file_permission(0, 0, 0o000, FileAccess::Execute));
+    }
+
+    #[test]
+    fn test_user_not_in_allowed_list() {
+        let validator = create_test_validator();
+
+        // User 2000 is not in allowed_users or allowed_groups
+        assert!(!validator.check_file_permission(2000, 2000, 0o777, FileAccess::Read));
+        assert!(!validator.check_file_permission(2000, 2000, 0o777, FileAccess::Write));
+    }
+
+    #[test]
+    fn test_path_validation() {
+        let validator = create_test_validator();
+
+        // Valid paths
+        assert!(
+            validator
+                .validate_secure_path("/safe/path/file.txt")
+                .is_ok()
+        );
+        assert!(
+            validator
+                .validate_secure_path("relative/path/file.txt")
+                .is_ok()
+        );
+
+        // Path traversal attempts
+        assert!(validator.validate_secure_path("../unsafe").is_err());
+        assert!(
+            validator
+                .validate_secure_path("/safe/../../../etc/passwd")
+                .is_err()
+        );
+
+        // Suspicious extensions
+        assert!(validator.validate_secure_path("malware.exe").is_err());
+        assert!(validator.validate_secure_path("script.bat").is_err());
+        assert!(validator.validate_secure_path("safe.txt").is_ok());
     }
 }

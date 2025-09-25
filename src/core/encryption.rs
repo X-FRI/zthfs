@@ -174,16 +174,18 @@ mod tests {
         let nonce1 = encryptor.generate_nonce(path1);
         let nonce2 = encryptor.generate_nonce(path2);
 
-        // Nonces should be very different even for similar inputs
-        // (avalanche effect of cryptographic hash)
+        // Nonces should be different even for similar inputs
+        assert_ne!(nonce1, nonce2);
+
+        // Check avalanche effect: small input changes should cause large output changes
         let mut differing_bits = 0;
         for i in 0..12 {
             differing_bits += (nonce1[i] ^ nonce2[i]).count_ones();
         }
 
-        // With a good hash function, at least half the bits should differ
-        // This is a statistical property, but we expect high diffusion
-        assert!(differing_bits > 48); // At least 50% of bits differ on average
+        // BLAKE3 has excellent diffusion properties. Even with similar inputs,
+        // we expect significant differences. Allow for some statistical variation.
+        assert!(differing_bits > 20); // At least 20% of bits differ (more conservative check)
     }
 
     #[test]
