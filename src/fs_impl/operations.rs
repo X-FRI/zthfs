@@ -126,6 +126,42 @@ impl FileSystemOperations {
         Ok(decrypted_data)
     }
 
+    /// Write partial content to a file at the specified offset (with encryption and integrity verification).
+    /// This enables proper POSIX write semantics with offset support.
+    pub fn write_partial(fs: &Zthfs, path: &Path, offset: i64, data: &[u8]) -> ZthfsResult<u32> {
+        // Read the current file content
+        let current_data = match Self::read_file(fs, path) {
+            Ok(data) => data,
+            Err(_) => {
+                // File doesn't exist or other error, treat as empty file
+                Vec::new()
+            }
+        };
+
+        let offset = offset as usize;
+        let new_size = std::cmp::max(current_data.len(), offset + data.len());
+
+        // Create new data buffer
+        let mut new_data = vec![0u8; new_size];
+
+        // Copy existing data
+        if !current_data.is_empty() {
+            let copy_len = std::cmp::min(current_data.len(), new_data.len());
+            new_data[..copy_len].copy_from_slice(&current_data[..copy_len]);
+        }
+
+        // Write new data at offset
+        let write_start = offset;
+        let write_end = std::cmp::min(write_start + data.len(), new_data.len());
+        let data_end = write_end - write_start;
+        new_data[write_start..write_end].copy_from_slice(&data[..data_end]);
+
+        // Write the modified data back
+        Self::write_file(fs, path, &new_data)?;
+
+        Ok(data_end as u32)
+    }
+
     /// Write the content of the file (with encryption and integrity verification).
     /// This function now uses chunked writing for better performance with large files.
     pub fn write_file(fs: &Zthfs, path: &Path, data: &[u8]) -> ZthfsResult<()> {
@@ -596,6 +632,80 @@ mod tests {
         // Delete file
         FileSystemOperations::remove_file(&fs, test_path).unwrap();
         assert!(!FileSystemOperations::path_exists(&fs, test_path));
+    }
+
+    #[test]
+    fn test_partial_write_operations() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        let test_path = Path::new("/partial_write_test.txt");
+
+        // Create initial file content
+        let initial_data = b"Hello, World!";
+        FileSystemOperations::write_file(&fs, test_path, initial_data).unwrap();
+
+        // Test partial write at offset 7 (overwrite "World" with "Universe")
+        let write_data = b"Universe";
+        let bytes_written =
+            FileSystemOperations::write_partial(&fs, test_path, 7, write_data).unwrap();
+        assert_eq!(bytes_written, write_data.len() as u32);
+
+        // Read entire file to verify content
+        let read_data = FileSystemOperations::read_file(&fs, test_path).unwrap();
+        let expected = b"Hello, Universe"; // "World!" (6 chars) -> "Universe" (7 chars)
+        assert_eq!(read_data, expected);
+
+        // Test partial write beyond current file size (append-like behavior)
+        let append_data = b" How are you?";
+        let bytes_written = FileSystemOperations::write_partial(
+            &fs,
+            test_path,
+            read_data.len() as i64,
+            append_data,
+        )
+        .unwrap();
+        assert_eq!(bytes_written, append_data.len() as u32);
+
+        // Verify final content
+        let final_data = FileSystemOperations::read_file(&fs, test_path).unwrap();
+        let expected_final = b"Hello, Universe How are you?";
+        assert_eq!(final_data, expected_final);
+
+        // Clean up
+        FileSystemOperations::remove_file(&fs, test_path).unwrap();
+    }
+
+    #[test]
+    fn test_partial_write_edge_cases() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        let test_path = Path::new("/edge_case_test.txt");
+
+        // Test writing to empty/non-existent file
+        let write_data = b"Start";
+        let bytes_written =
+            FileSystemOperations::write_partial(&fs, test_path, 0, write_data).unwrap();
+        assert_eq!(bytes_written, write_data.len() as u32);
+
+        let read_data = FileSystemOperations::read_file(&fs, test_path).unwrap();
+        assert_eq!(read_data, write_data);
+
+        // Test partial write with offset larger than file size (creates sparse file)
+        let sparse_data = b"Sparse";
+        let large_offset = 1000i64;
+        let bytes_written =
+            FileSystemOperations::write_partial(&fs, test_path, large_offset, sparse_data).unwrap();
+        assert_eq!(bytes_written, sparse_data.len() as u32);
+
+        let read_data = FileSystemOperations::read_file(&fs, test_path).unwrap();
+        assert_eq!(read_data.len(), (large_offset as usize) + sparse_data.len());
+        assert_eq!(&read_data[(large_offset as usize)..], sparse_data);
+
+        // Verify original data is preserved at beginning
+        assert_eq!(&read_data[..write_data.len()], write_data);
+
+        // Clean up
+        FileSystemOperations::remove_file(&fs, test_path).unwrap();
     }
 
     #[test]

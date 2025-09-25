@@ -328,15 +328,21 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        // TODO: For now, implement as full file write. Partial writes would require
-        // more complex chunked write implementation with offset support.
-        match operations::FileSystemOperations::write_file(self, &path, data) {
-            Ok(()) => {
+        // Use partial write implementation for proper POSIX semantics
+        match operations::FileSystemOperations::write_partial(self, &path, _offset, data) {
+            Ok(bytes_written) => {
                 self.logger
-                    .log_access("write", &path.to_string_lossy(), uid, gid, "success", None)
+                    .log_access(
+                        "write",
+                        &path.to_string_lossy(),
+                        uid,
+                        gid,
+                        "success",
+                        Some(format!("offset={}, bytes={}", _offset, bytes_written)),
+                    )
                     .unwrap_or(());
 
-                reply.written(data.len() as u32);
+                reply.written(bytes_written);
             }
             Err(e) => {
                 let error_msg = format!("{e}");
