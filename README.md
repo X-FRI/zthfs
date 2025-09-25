@@ -5,7 +5,7 @@
 
 ## Introduction
 
-ZTHFS is a fully-featured, transparent, secure, and enterprise-grade FUSE file system for medical data.
+ZTHFS is a highly secure, transparent storage system architecture with a focus on data security and integrity.
 
 ## Technical Architecture
 
