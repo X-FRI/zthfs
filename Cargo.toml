@@ -43,12 +43,13 @@ harness = false
 path = "benches/filesystem_benchmarks.rs"
 
 [profile.release]
-debug = true
+opt-level = 3        # enable highest level of optimization
+lto = true           # enable link time optimization
+codegen-units = 1    # use single code generation unit, for better optimization
+panic = "abort"      # abort on panic, reduce binary size
+strip = true         # remove debug symbols, further reduce binary size
+debug = true         # keep debug information for production environment troubleshooting
 
 [profile.bench]
-opt-level = 3
-debug = false
-lto = true
-codegen-units = 1
-panic = "abort"
-target-cpu = "native"
+inherits = "release" # inherit release configuration
+debug = false        # remove debug information to get accurate benchmark results
