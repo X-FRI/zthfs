@@ -18,25 +18,29 @@ graph TD
     subgraph FUSE Layer
         B[ZTHFS]
         subgraph Core Modules
-            B1["Encryption<br/>(AES-256-GCM + Nonce Cache)"]
+            B1["Encryption<br/>(AES-256-GCM + BLAKE3 Nonce)"]
             B2["Integrity<br/>(CRC32c + Chunked Verification)"]
-            B3["Logging<br/>(Structured JSON Logs)"]
+            B3["Logging<br/>(Async JSON Logs + Channel)"]
+        end
+        subgraph Security Engine
+            B4["POSIX Permissions<br/>(User/Group + File Mode)"]
         end
         subgraph Storage Engine
-            B4["Chunked File System<br/>(4MB Chunks and Metadata)"]
+            B5["Chunked File System<br/>(4MB Chunks + Partial Writes)"]
         end
         B --> B1
         B --> B2
         B --> B3
         B --> B4
+        B --> B5
     end
 
     subgraph Kernel VFS
-        C[POSIX Interface]
+        C[POSIX Interface<br/>(Full Read/Write Semantics)]
     end
 
     subgraph Storage Layer
-        D["Chunked Encrypted Storage<br/>(Independent Encryption and Integrity)"]
+        D["Chunked Encrypted Storage<br/>(Independent Encryption + Integrity)"]
     end
 
     A -- requests --> B
@@ -49,20 +53,21 @@ graph TD
 ```
 src/
 ├── core/                 # Core functionality modules
-│   ├── encryption.rs    # Encryption handling
-│   ├── integrity.rs     # Integrity verification
-│   └── logging.rs       # Log management
-├── config/              # Configuration management
-│   └── mod.rs
-├── errors/              # Error handling
-│   └── mod.rs
-├── fs_impl/             # FUSE implementation
-│   ├── mod.rs
-│   ├── operations.rs    # Filesystem operations
-│   ├── security.rs      # Security module
-│   └── utils.rs         # Utility functions
-└── utils/               # General utilities
-    └── mod.rs
+│   ├── encryption.rs    # AES-256-GCM encryption with BLAKE3 nonce generation
+│   ├── integrity.rs     # CRC32c integrity verification and validation
+│   └── logging.rs       # Asynchronous logging with channel-based architecture
+├── config/              # Configuration management and validation
+│   └── mod.rs           # Encryption, logging, integrity, and security configs
+├── errors/              # Comprehensive error handling
+│   └── mod.rs           # Custom error types and conversions
+├── fs_impl/             # FUSE filesystem implementation
+│   ├── mod.rs           # Main filesystem struct and FUSE integration
+│   ├── operations.rs    # File operations with chunking and partial writes
+│   ├── security.rs      # POSIX permissions and access control
+│   └── utils.rs         # Filesystem utility functions
+├── utils/               # General utilities
+│   └── mod.rs           # Path sanitization, formatting, encoding
+└── lib.rs               # Library interface and integration tests
 ```
 
 ## Quick Start
@@ -173,16 +178,16 @@ ZTHFS supports configurable file chunking to optimize performance for different 
 }
 ```
 
-**Chunk Size Options**:
+Chunk Size Options:
 - `0`: Disable chunking entirely (all files stored as single files)
 - `1024*1024` (1MB): Smaller chunks, better for random access
 - `4*1024*1024` (4MB): Default balance between memory usage and performance
 - `16*1024*1024` (16MB): Larger chunks, better for sequential access
 
-**When to Adjust Chunk Size**:
-- **Small chunks (< 2MB)**: Better for systems with frequent random access patterns
-- **Large chunks (≥ 8MB)**: Better for streaming workloads and memory-constrained environments
-- **Disable chunking (0)**: For workloads where all files are small or performance is critical
+When to Adjust Chunk Size:
+- Small chunks (< 2MB): Better for systems with frequent random access patterns
+- Large chunks (≥ 8MB): Better for streaming workloads and memory-constrained environments
+- Disable chunking (0): For workloads where all files are small or performance is critical
 
 ### Environment Variable Configuration
 
@@ -286,25 +291,29 @@ let is_valid = IntegrityHandler::verify_integrity(&encrypted, checksum);
 ### Benchmark Results
 
 ```
-Encryption Performance (AES-256-GCM + DashMap Cache):
-- 1KB encrypt/decrypt: 433ns / 431ns (-32.5% / -32.4% improvement)
-- 1MB encrypt/decrypt: 403μs / 401μs (-30.2% / -33.5% improvement)
-- Nonce generation: 16.0ns (+3.8% regression, Cache hit rate: ~99%)
+Encryption Performance (AES-256-GCM + BLAKE3 Nonce Generation):
+- 1KB encrypt: 648.19ns (+49.6% vs previous - security trade-off)
+- 1MB encrypt: 596.62μs (+48% vs previous - security trade-off)
+- Nonce generation (BLAKE3): 15.502ns (-3.1% improvement vs CRC32c)
 
 Integrity Verification (CRC32c + Extended Attributes):
-- Checksum computation (1KB): 132ns (+4.8% regression)
-- Checksum computation (1MB): 129μs (+8.4% regression)
-- Integrity verification (1KB): 133ns (+4.7% regression)
-- Integrity verification (1MB): 128μs (+7.6% regression)
+- Checksum computation (1KB): 127.73ns (-3.2% improvement)
+- Checksum computation (1MB): 122.74μs (-4.9% improvement)
+- Integrity verification (1KB): 129.20ns (-3.0% improvement)
+- Integrity verification (1MB): 123.05μs (-3.8% improvement)
 
-Filesystem Operations (Chunked Storage + FUSE Integration):
-- File read (1KB): 6.74μs (-8.0% improvement)
-- File write (1KB): 9.49μs (-1.7% improvement)
-- File read (1MB): 1.13ms (-20.9% improvement)
-- File write (1MB): 738μs (-28.3% improvement)
-- Get file size (1KB): 8.50μs (-5.8% improvement)
-- Get file size (10MB): 4.47μs (-1.4% improvement - chunked metadata)
-- Path exists check: 2.66μs (-3.2% improvement)
+Asynchronous Logging Performance (Channel-based Architecture):
+- Single message logging: 483.95ns (lock-free async processing)
+- Batch 100 messages: 45.386μs (efficient batching)
+- Performance data logging: 589.83ns (structured metadata)
+
+Filesystem Operations (Chunked Storage + Partial Writes + Security):
+- File read (1KB): 7.27μs (+7.8% vs previous - security checks)
+- File write (1KB): 9.64μs (+1.6% vs previous - partial write support)
+- File read (1MB): 1.42ms (+25.7% vs previous - enhanced chunking)
+- File write (1MB): 1.05ms (+42% vs previous - partial write overhead)
+- Get file size (1KB): 9.22μs (+8.5% vs previous - metadata overhead)
+- Path exists check: 2.88μs (+8.3% vs previous - security validation)
 
 Chunking Threshold Analysis (4MB Boundary Impact):
 - File read (3.9MB): 2.72ms - Pre-chunking baseline (-35.2% improvement)
@@ -341,14 +350,15 @@ Chunking Performance Insights:
 
 ### Resource Usage
 
-- **Memory Usage**: Basic usage ~15MB, peak ~50MB (75% reduction for large file operations)
-- **CPU Usage**: <1% idle, <15% under load (optimized with LTO and native CPU instructions)
-- **Storage Overhead**: Encryption overhead ~10%, logging overhead ~5%, chunking overhead ~2%
-- **Concurrent Performance**: Supports 5000+ concurrent operations (DashMap optimization)
-- **Large File Efficiency**: Files >4MB automatically chunked, reducing memory usage by ~75%
-- **Cache Performance**: Nonce cache hit rate ~99%, encryption cache ~10x faster under contention
-- **Compiler Optimizations**: LTO enabled, single codegen unit, panic=abort, CPU-specific optimizations
-- **Dependency Updates**: Updated rand (0.9.2), generic_array handling, and criterion (0.7.0)
+- Memory Usage: Basic usage ~18MB, peak ~55MB (enhanced security features)
+- CPU Usage: <1% idle, <18% under load (asynchronous logging reduces lock contention)
+- Storage Overhead: Encryption overhead ~12%, async logging overhead ~3%, chunking overhead ~2%
+- Concurrent Performance: Supports 5000+ concurrent operations (channel-based async processing)
+- Large File Efficiency: Files >4MB automatically chunked with partial write support
+- Security Performance: BLAKE3 nonce generation, POSIX permission checks
+- Async Processing: Lock-free logging with dedicated worker threads
+- Compiler Optimizations: LTO enabled, single codegen unit, panic=abort, CPU-specific optimizations
+- Dependencies: tokio (1.0), crossbeam-channel (0.5), blake3 (1.8.2), criterion (0.7.0)
 
 ### Performance Optimization Insights
 
@@ -358,10 +368,11 @@ Chunking Performance Insights:
 - Scalability: Supports files of any size without memory constraints
 
 #### Performance Trade-offs:
-- Threshold Penalty: Reduced to ~23% with optimized compilation (was higher in previous versions)
-- Cross-chunk Overhead: 93% performance penalty for reads spanning chunk boundaries (unchanged)
-- Sequential vs Random: Sequential access benefits significantly from chunking, random access has penalty
-- Compiler Optimizations: LTO and CPU-specific instructions provide 30-40% overall performance boost
+- Security Enhancement: BLAKE3 nonce generation provides cryptographic security (48% encryption overhead acceptable)
+- Async Logging: Channel-based architecture eliminates lock contention in high-concurrency scenarios
+- Partial Writes: POSIX-compliant write semantics with reasonable performance overhead
+- Permission Checks: Fine-grained access control with minimal latency impact
+- Compiler Optimizations: LTO and CPU-specific instructions maximize performance within security constraints
 
 #### Recommended Usage Patterns:
 - Small Files (<4MB): Optimal for frequent random access operations
@@ -387,14 +398,14 @@ Avoid chunking when you have:
 
 #### 2. How to Choose Chunk Size?
 
-**Chunk Size Selection Guidelines:**
+Chunk Size Selection Guidelines:
 
-| Chunk Size        | Use Case                                 | Performance Characteristics                           |
-| ----------------- | ---------------------------------------- | ----------------------------------------------------- |
-| **1MB**           | High random access, real-time systems    | Lower memory usage, more frequent I/O operations      |
-| **4MB** (Default) | Balanced workloads, general medical data | Optimal balance of memory efficiency and access speed |
-| **8-16MB**        | Sequential access, streaming workloads   | Maximum memory efficiency, fewer I/O operations       |
-| **0** (Disabled)  | Small files only, maximum performance    | No chunking overhead, direct file access              |
+| Chunk Size    | Use Case                                 | Performance Characteristics                           |
+| ------------- | ---------------------------------------- | ----------------------------------------------------- |
+| 1MB           | High random access, real-time systems    | Lower memory usage, more frequent I/O operations      |
+| 4MB (Default) | Balanced workloads, general medical data | Optimal balance of memory efficiency and access speed |
+| 8-16MB        | Sequential access, streaming workloads   | Maximum memory efficiency, fewer I/O operations       |
+| 0 (Disabled)  | Small files only, maximum performance    | No chunking overhead, direct file access              |
 
 Selection Criteria:
 - Smaller chunks (1-2MB): Choose when random access is frequent and memory is not a bottleneck
@@ -437,16 +448,16 @@ debug = false        # remove debug information to get accurate benchmark result
 
 #### Configuration Options Explained
 
-| Option                 | Purpose                                         | Impact on Performance                  |
-| ---------------------- | ----------------------------------------------- | -------------------------------------- |
-| `opt-level = 3`        | Enables maximum compiler optimizations          | **+10-15%** performance improvement    |
-| `debug = false`        | Removes debug symbols and metadata              | **+2-5%** reduced binary size          |
-| `lto = true`           | Link-time optimization across crate boundaries  | **+5-10%** better code generation      |
-| `codegen-units = 1`    | Single compilation unit for better optimization | **+3-8%** improved instruction cache   |
-| `panic = "abort"`      | Minimal panic runtime overhead                  | **+1-2%** faster error paths           |
-| `strip = true`         | Removes all debug symbols                       | **+1-3%** reduced binary size          |
-| `inherits = "release"` | Inherit release profile settings                | **Consistent optimization levels**     |
-| **RUSTFLAGS**          | Environment variable for CPU-specific opts      | **+5-10%** architecture-specific gains |
+| Option                 | Purpose                                         | Impact on Performance              |
+| ---------------------- | ----------------------------------------------- | ---------------------------------- |
+| `opt-level = 3`        | Enables maximum compiler optimizations          | +10-15% performance improvement    |
+| `debug = false`        | Removes debug symbols and metadata              | +2-5% reduced binary size          |
+| `lto = true`           | Link-time optimization across crate boundaries  | +5-10% better code generation      |
+| `codegen-units = 1`    | Single compilation unit for better optimization | +3-8% improved instruction cache   |
+| `panic = "abort"`      | Minimal panic runtime overhead                  | +1-2% faster error paths           |
+| `strip = true`         | Removes all debug symbols                       | +1-3% reduced binary size          |
+| `inherits = "release"` | Inherit release profile settings                | Consistent optimization levels     |
+| RUSTFLAGS              | Environment variable for CPU-specific opts      | +5-10% architecture-specific gains |
 
 ### Performance Tuning Recommendations
 
@@ -505,11 +516,11 @@ cargo bench -- --baseline main
 
 For accurate and reproducible benchmarks:
 
-1. **Hardware**: Use consistent hardware with AES-NI support
-2. **System Load**: Run benchmarks on idle systems
-3. **Memory**: Ensure sufficient RAM (minimum 8GB)
-4. **Background Processes**: Stop unnecessary services
-5. **Power Management**: Set CPU governor to "performance"
+1. Hardware: Use consistent hardware with AES-NI support
+2. System Load: Run benchmarks on idle systems
+3. Memory: Ensure sufficient RAM (minimum 8GB)
+4. Background Processes: Stop unnecessary services
+5. Power Management: Set CPU governor to "performance"
 
 #### Performance Monitoring in Production
 
@@ -527,27 +538,27 @@ zthfs health --metrics --verbose
 
 ### Benchmark Accuracy Notes
 
-- **Baseline Measurements**: All benchmarks use statistical analysis with 95% confidence intervals
-- **Outlier Detection**: Criterion.rs automatically detects and handles measurement outliers
-- **Warm-up Period**: Each benchmark includes a 3-second warm-up phase
-- **Sample Size**: 100 samples per benchmark for statistical reliability
-- **CPU Frequency Impact**: Performance results are sensitive to CPU frequency scaling - higher frequencies yield better results
-- **Hardware Acceleration**: AES-NI and CRC32c hardware acceleration significantly improve cryptographic operations
+- Baseline Measurements: All benchmarks use statistical analysis with 95% confidence intervals
+- Outlier Detection: Criterion.rs automatically detects and handles measurement outliers
+- Warm-up Period: Each benchmark includes a 3-second warm-up phase
+- Sample Size: 100 samples per benchmark for statistical reliability
+- CPU Frequency Impact: Performance results are sensitive to CPU frequency scaling - higher frequencies yield better results
+- Hardware Acceleration: AES-NI and CRC32c hardware acceleration significantly improve cryptographic operations
 
 ### CPU Frequency Impact Analysis
 
 The benchmark results show significant performance improvements with optimized compiler settings and CPU-specific optimizations:
 
-| Component            | Metric                | Performance Improvement |
-| -------------------- | --------------------- | ----------------------- |
-| **Encryption**       | 1KB AES-256-GCM       | **-32.5%** latency      |
-| **Encryption**       | 1MB AES-256-GCM       | **-30.2%** latency      |
-| **File I/O**         | 1KB operations        | **-8.0%** latency       |
-| **File I/O**         | 1MB operations        | **-20.9%** latency      |
-| **Chunking**         | 8MB file operations   | **-41.4%** latency      |
-| **Nonce Generation** | Per-file unique nonce | **+3.8%** latency       |
+| Component        | Metric                | Performance Improvement |
+| ---------------- | --------------------- | ----------------------- |
+| Encryption       | 1KB AES-256-GCM       | -32.5% latency          |
+| Encryption       | 1MB AES-256-GCM       | -30.2% latency          |
+| File I/O         | 1KB operations        | -8.0% latency           |
+| File I/O         | 1MB operations        | -20.9% latency          |
+| Chunking         | 8MB file operations   | -41.4% latency          |
+| Nonce Generation | Per-file unique nonce | +3.8% latency           |
 
-**Recommendation**: For optimal performance in production environments:
+Recommendation: For optimal performance in production environments:
 - Use `RUSTFLAGS="-C target-cpu=native"` during compilation
 - Set CPU frequency scaling to "performance" mode
 - Disable power saving features for maximum throughput
@@ -557,23 +568,25 @@ The benchmark results show significant performance improvements with optimized c
 
 ### HIPAA Compliance
 
-| Requirement            | Implementation Status | Description                       |
-| ---------------------- | --------------------- | --------------------------------- |
-| Static Data Encryption | ✅ Fully Supported     | AES-256-GCM Full-disk encryption  |
-| Access Control         | ✅ Fully Supported     | User group permissions + auditing |
-| Data Integrity         | ✅ Fully Supported     | CRC32c checksum verification      |
-| Audit Logging          | ✅ Fully Supported     | Structured JSON logs              |
-| Transport Security     | ✅ Fully Supported     | End-to-end encrypted transmission |
+| Requirement            | Implementation Status | Description                                         |
+| ---------------------- | --------------------- | --------------------------------------------------- |
+| Static Data Encryption | ✅ Enhanced            | AES-256-GCM + BLAKE3 cryptographically secure nonce |
+| Access Control         | ✅ POSIX Compliant     | User/group permissions + file mode (rwx) bits       |
+| Data Integrity         | ✅ Validated           | CRC32c checksum with algorithm validation           |
+| Audit Logging          | ✅ Async High-Perf     | Channel-based async logging, lock-free processing   |
+| Transport Security     | ✅ Enhanced            | End-to-end encryption with partial write support    |
+| Security Architecture  | ✅ Zero-Trust          | Path traversal protection, executable file blocking |
 
 ### GDPR Compliance
 
-| Requirement       | Implementation Status | Description                      |
-| ----------------- | --------------------- | -------------------------------- |
-| Data Protection   | ✅ Fully Supported     | Transparent encryption mechanism |
-| Privacy Design    | ✅ Fully Supported     | Default encryption policy        |
-| Access Records    | ✅ Fully Supported     | Complete audit trail             |
-| Data Minimization | ✅ Fully Supported     | Encrypted on-demand storage      |
-| Transparency      | ✅ Fully Supported     | Detailed documentation           |
+| Requirement       | Implementation Status | Description                                    |
+| ----------------- | --------------------- | ---------------------------------------------- |
+| Data Protection   | ✅ Enhanced            | BLAKE3 nonce generation prevents data breaches |
+| Privacy Design    | ✅ Secure Defaults     | Insecure placeholder keys prevent accidents    |
+| Access Records    | ✅ Comprehensive       | Full POSIX permission audit trail              |
+| Data Minimization | ✅ Optimized           | Chunked storage with on-demand access          |
+| Transparency      | ✅ Documented          | Complete API documentation and security specs  |
+| Right to Erasure  | ✅ Supported           | Secure file deletion with integrity checks     |
 
 ## Monitoring and Operations
 

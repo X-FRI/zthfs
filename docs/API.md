@@ -34,11 +34,17 @@ config.save_to_file("/etc/zthfs/config.json").unwrap();
 use zthfs::core::encryption::EncryptionHandler;
 use zthfs::config::EncryptionConfig;
 
-// Create encryption handler
-let config = EncryptionConfig::default();
+// Create encryption handler with secure random keys
+let config = EncryptionConfig::with_random_keys();
 let encryptor = EncryptionHandler::new(&config);
 
-// Encrypt data
+// Create encryption handler with specific keys
+let key = EncryptionConfig::generate_key();
+let nonce_seed = EncryptionConfig::generate_nonce_seed();
+let config = EncryptionConfig::new(key.to_vec(), nonce_seed.to_vec());
+let encryptor = EncryptionHandler::new(&config);
+
+// Encrypt data with BLAKE3 nonce generation
 let data = b"sensitive medical data";
 let path = "/patient/record.txt";
 let encrypted = encryptor.encrypt(data, path).unwrap();
@@ -47,9 +53,8 @@ let encrypted = encryptor.encrypt(data, path).unwrap();
 let decrypted = encryptor.decrypt(&encrypted, path).unwrap();
 assert_eq!(data.to_vec(), decrypted);
 
-// Generate random keys
-let key = EncryptionHandler::generate_key(); // 32 bytes
-let nonce_seed = EncryptionHandler::generate_nonce_seed(); // 12 bytes
+// WARNING: Default config contains insecure placeholder values
+// let insecure_config = EncryptionConfig::default(); // NOT FOR PRODUCTION!
 ```
 
 ### Integrity Verification
@@ -75,84 +80,118 @@ let stored_checksum = IntegrityHandler::get_checksum_from_xattr(path, &config).u
 assert_eq!(Some(checksum), stored_checksum);
 ```
 
-### Logging Management
+### Asynchronous Logging Management
 
 ```rust
-use zthfs::core::logging::LogHandler;
+use zthfs::core::logging::{LogHandler, PerformanceLogParams};
 use zthfs::config::LogConfig;
 
-// Create log handler
-let config = LogConfig::default();
+// Create asynchronous log handler with channel-based architecture
+let config = LogConfig {
+    enabled: true,
+    file_path: "/var/log/zthfs/access.log".to_string(),
+    level: "info".to_string(),
+    max_size: 100 * 1024 * 1024, // 100MB
+    rotation_count: 5,
+};
 let logger = LogHandler::new(&config).unwrap();
 
-// Log access events
-logger.log_access("read", "/file.txt", 1000, 1000, "success", None).unwrap();
+// Log access events (async, non-blocking)
+logger.log_access("read", "/patient/record.txt", 1000, 1000, "success", None).unwrap();
 
-// Log error events
+// Log error events (async, non-blocking)
 logger.log_error("write", "/file.txt", 1000, 1000, "permission denied", None).unwrap();
 
-// Log performance metrics
-logger.log_performance(zthfs::core::logging::PerformanceLogParams {
+// Log performance metrics with structured data
+logger.log_performance(PerformanceLogParams {
     operation: "encrypt".to_string(),
-    path: "/file.txt".to_string(),
+    path: "/large_medical_scan.dcm".to_string(),
     uid: 1000,
     gid: 1000,
     duration_ms: 150,
-    file_size: Some(1024),
-    checksum: Some("abc123".to_string()),
+    file_size: Some(1024 * 1024), // 1MB
+    checksum: Some("abc123...".to_string()),
 }).unwrap();
 
-// Flush all logs
-logger.flush_all().unwrap();
+// Force flush all pending logs (blocking operation)
+logger.flush_logs().unwrap();
+
+// Shutdown logger and wait for completion
+logger.flush_all().unwrap(); // Also shuts down the async worker
 ```
 
-### Filesystem Operations
+### Filesystem Operations (with Partial Write Support)
 
 ```rust
 use zthfs::fs_impl::{Zthfs, FileSystemOperations};
+use zthfs::fs_impl::security::FileAccess;
 use zthfs::config::FilesystemConfigBuilder;
 
-// Create filesystem instance
+// Create filesystem instance with security features
 let config = FilesystemConfigBuilder::new()
     .data_dir("/tmp/zthfs_data".to_string())
     .mount_point("/tmp/zthfs_mount".to_string())
+    .encryption(zthfs::config::EncryptionConfig::with_random_keys())
     .build()
     .unwrap();
 
 let fs = Zthfs::new(&config).unwrap();
 
-// Read file
-let data = FileSystemOperations::read_file(&fs, std::path::Path::new("/test.txt")).unwrap();
-
-// Write file
+// Full file operations
 let data = b"Hello, World!";
 FileSystemOperations::write_file(&fs, std::path::Path::new("/test.txt"), data).unwrap();
+let read_data = FileSystemOperations::read_file(&fs, std::path::Path::new("/test.txt")).unwrap();
 
-// Check if file exists
+// Partial write operations (POSIX-compliant)
+let additional_data = b" Universe!";
+let bytes_written = FileSystemOperations::write_partial(
+    &fs,
+    std::path::Path::new("/test.txt"),
+    5, // Offset: after "Hello"
+    additional_data
+).unwrap();
+assert_eq!(bytes_written, additional_data.len() as u32);
+
+// Result: "Hello Universe!" (original "Hello, World!" partially overwritten)
+
+// Check file access permissions
+let can_read = fs.check_file_access(1000, 1000, FileAccess::Read, Some(0o644));
+let can_write = fs.check_file_access(1000, 1000, FileAccess::Write, Some(0o644));
+
+// File metadata operations
 let exists = FileSystemOperations::path_exists(&fs, std::path::Path::new("/test.txt"));
-
-// Get file size
 let size = FileSystemOperations::get_file_size(&fs, std::path::Path::new("/test.txt")).unwrap();
 
-// Remove file
+// Clean up
 FileSystemOperations::remove_file(&fs, std::path::Path::new("/test.txt")).unwrap();
 ```
 
-### Security Features
+### Security Features (POSIX Permissions & Access Control)
 
 ```rust
-use zthfs::fs_impl::security::{SecurityValidator, SecurityEvent, SecurityLevel};
+use zthfs::fs_impl::security::{SecurityValidator, SecurityEvent, SecurityLevel, FileAccess};
 use zthfs::config::SecurityConfig;
 
-// Create security validator
-let config = SecurityConfig::default();
+// Create security validator with fine-grained access control
+let config = SecurityConfig {
+    allowed_users: vec![1000, 0],
+    allowed_groups: vec![1000, 0],
+    encryption_strength: "high".to_string(),
+    access_control_level: "strict".to_string(),
+};
 let validator = SecurityValidator::new(config);
 
-// Validate user access permissions
-let has_access = validator.validate_user_access(1000, 1000);
-assert!(has_access);
+// Validate POSIX-style file permissions
+let can_read = validator.check_file_permission(1000, 1000, 0o644, FileAccess::Read);
+let can_write = validator.check_file_permission(1000, 1000, 0o644, FileAccess::Write);
+let can_execute = validator.check_file_permission(1000, 1000, 0o644, FileAccess::Execute);
+assert!(can_read && can_write && !can_execute); // rw-r--r-- permissions
 
-// Record security events
+// Root user has full access regardless of file permissions
+let root_can_execute = validator.check_file_permission(0, 0, 0o000, FileAccess::Execute);
+assert!(root_can_execute); // Root always has access
+
+// Record security events with severity levels
 validator.record_security_event(
     SecurityEvent::AuthenticationFailure {
         user: 1000,
@@ -161,15 +200,16 @@ validator.record_security_event(
     SecurityLevel::Medium,
 ).unwrap();
 
-// Check if user is locked
+// Check if user is locked due to failed attempts
 let is_locked = validator.is_user_locked(1000);
 if is_locked {
     println!("User is locked due to too many failed attempts");
 }
 
-// Validate secure paths
-validator.validate_secure_path("/safe/path").unwrap();
-validator.validate_secure_path("../unsafe/path").unwrap(); // Will fail
+// Validate secure paths (prevent path traversal and suspicious files)
+validator.validate_secure_path("/safe/path/file.txt").unwrap();
+validator.validate_secure_path("../unsafe/path").unwrap_err(); // Path traversal detected
+validator.validate_secure_path("malware.exe").unwrap_err(); // Suspicious extension
 ```
 
 ### Utility Functions
@@ -230,71 +270,225 @@ impl From<aes_gcm::Error> for ZthfsError {
 
 ## Testing
 
+### Unit Tests
+
 ```rust
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+    use zthfs::fs_impl::security::{SecurityValidator, FileAccess};
 
     #[test]
-    fn test_encryption_roundtrip() {
-        let config = EncryptionConfig::default();
+    fn test_blake3_nonce_security() {
+        // Test BLAKE3 nonce generation security
+        let config = EncryptionConfig::with_random_keys();
         let encryptor = EncryptionHandler::new(&config);
 
-        let data = b"test data";
-        let path = "/test/file.txt";
+        let path1 = "/test/file1.txt";
+        let path2 = "/test/file2.txt";
 
-        let encrypted = encryptor.encrypt(data, path).unwrap();
-        let decrypted = encryptor.decrypt(&encrypted, path).unwrap();
+        let nonce1 = encryptor.generate_nonce(path1);
+        let nonce2 = encryptor.generate_nonce(path2);
 
-        assert_eq!(data.to_vec(), decrypted);
+        // Different paths should produce different nonces
+        assert_ne!(nonce1, nonce2);
+        assert_eq!(nonce1.len(), 12); // GCM nonce size
     }
 
     #[test]
-    fn test_filesystem_operations() {
+    fn test_posix_permissions() {
+        let validator = SecurityValidator::new(SecurityConfig {
+            allowed_users: vec![1000],
+            allowed_groups: vec![1000],
+            ..Default::default()
+        });
+
+        // Test rw-r--r-- permissions (0o644)
+        assert!(validator.check_file_permission(1000, 1000, 0o644, FileAccess::Read));
+        assert!(validator.check_file_permission(1000, 1000, 0o644, FileAccess::Write));
+        assert!(!validator.check_file_permission(1000, 1000, 0o644, FileAccess::Execute));
+
+        // Root always has access
+        assert!(validator.check_file_permission(0, 0, 0o000, FileAccess::Execute));
+    }
+
+    #[test]
+    fn test_config_validation() {
+        // Invalid algorithm should fail
+        let invalid_config = IntegrityConfig {
+            enabled: true,
+            algorithm: "invalid".to_string(),
+            xattr_namespace: "user.zthfs".to_string(),
+        };
+        assert!(IntegrityHandler::validate_config(&invalid_config).is_err());
+
+        // Valid config should pass
+        let valid_config = IntegrityConfig::default();
+        assert!(IntegrityHandler::validate_config(&valid_config).is_ok());
+    }
+}
+```
+
+### Integration Tests
+
+```rust
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_end_to_end_encryption_workflow() {
         let temp_dir = tempdir().unwrap();
+        let data_dir = temp_dir.path().join("data");
+
+        std::fs::create_dir_all(&data_dir).unwrap();
+
         let config = FilesystemConfigBuilder::new()
-            .data_dir(temp_dir.path().to_string_lossy().to_string())
+            .data_dir(data_dir.to_string_lossy().to_string())
+            .mount_point("/tmp/test_mount".to_string())
+            .encryption(EncryptionConfig::with_random_keys())
             .build()
             .unwrap();
 
         let fs = Zthfs::new(&config).unwrap();
-        let test_data = b"Hello, World!";
-        let path = std::path::Path::new("/test.txt");
 
-        // Test write operation
-        FileSystemOperations::write_file(&fs, path, test_data).unwrap();
+        // Test full file operations
+        let medical_data = b"Patient: John Doe\nDiagnosis: Hypertension";
+        let path = std::path::Path::new("/medical_record.txt");
 
-        // Test read operation
+        FileSystemOperations::write_file(&fs, path, medical_data).unwrap();
         let read_data = FileSystemOperations::read_file(&fs, path).unwrap();
-        assert_eq!(test_data.to_vec(), read_data);
+        assert_eq!(read_data, medical_data);
 
-        // Test delete operation
+        // Test partial write operations
+        let update = b" - Controlled";
+        let bytes = FileSystemOperations::write_partial(&fs, path, 25, update).unwrap();
+        assert_eq!(bytes, update.len() as u32);
+
+        let final_data = FileSystemOperations::read_file(&fs, path).unwrap();
+        assert!(final_data.ends_with(b" - Controlled"));
+
+        // Clean up
         FileSystemOperations::remove_file(&fs, path).unwrap();
-        assert!(!FileSystemOperations::path_exists(&fs, path));
+    }
+
+    #[test]
+    fn test_async_logging_performance() {
+        let temp_dir = tempdir().unwrap();
+        let log_file = temp_dir.path().join("test.log");
+
+        let config = LogConfig {
+            enabled: true,
+            file_path: log_file.to_string_lossy().to_string(),
+            level: "info".to_string(),
+            max_size: 1024 * 1024,
+            rotation_count: 3,
+        };
+
+        let logger = LogHandler::new(&config).unwrap();
+
+        // Test async logging (non-blocking)
+        for i in 0..10 {
+            logger.log_access(
+                "read",
+                &format!("/test/file_{}.txt", i),
+                1000, 1000, "success", None
+            ).unwrap();
+        }
+
+        // Flush and shutdown
+        logger.flush_all().unwrap();
     }
 }
 ```
 
 ## Performance Benchmarks
 
-```rust
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+Run comprehensive performance benchmarks:
 
-fn bench_encrypt_1mb(c: &mut Criterion) {
-    let config = EncryptionConfig::default();
+```bash
+# Run all benchmarks
+cargo bench
+
+# Run specific benchmark suites
+cargo bench --bench crypto_benchmarks    # Encryption performance
+cargo bench --bench logging_benchmarks   # Async logging performance
+cargo bench --bench filesystem_benchmarks # File operations
+cargo bench --bench integrity_benchmarks  # Integrity verification
+
+# Run with detailed output
+cargo bench --bench crypto_benchmarks -- --verbose
+```
+
+### Benchmark Configuration
+
+```rust
+use criterion::{Criterion, criterion_group, criterion_main};
+use zthfs::{config::*, core::*, fs_impl::*};
+
+// Example: Comprehensive encryption benchmark
+fn bench_blake3_encryption(c: &mut Criterion) {
+    let config = EncryptionConfig::with_random_keys(); // Secure keys
     let encryptor = EncryptionHandler::new(&config);
 
-    let data = vec![0u8; 1024 * 1024]; // 1MB
-    let path = "/test/large_file.txt";
+    let data_1kb = vec![0u8; 1024];
+    let data_1mb = vec![0u8; 1024 * 1024];
+    let path = "/benchmark/test.dat";
 
-    c.bench_function("encrypt_1mb", |b| {
-        b.iter(|| {
-            let _ = encryptor.encrypt(black_box(&data), black_box(path));
-        })
+    let mut group = c.benchmark_group("encryption_blake3");
+
+    group.bench_function("1KB_encrypt", |b| {
+        b.iter(|| encryptor.encrypt(std::hint::black_box(&data_1kb), std::hint::black_box(path)))
     });
+
+    group.bench_function("1MB_encrypt", |b| {
+        b.iter(|| encryptor.encrypt(std::hint::black_box(&data_1mb), std::hint::black_box(path)))
+    });
+
+    group.bench_function("nonce_generation", |b| {
+        b.iter(|| encryptor.generate_nonce(std::hint::black_box(path)))
+    });
+
+    group.finish();
 }
 
-criterion_group!(benches, bench_encrypt_1mb);
+// Example: Async logging benchmark
+fn bench_async_logging(c: &mut Criterion) {
+    let temp_dir = std::env::temp_dir();
+    let config = LogConfig {
+        enabled: true,
+        file_path: temp_dir.join("bench.log").to_string_lossy().to_string(),
+        level: "info".to_string(),
+        max_size: 100 * 1024 * 1024,
+        rotation_count: 5,
+    };
+
+    let logger = LogHandler::new(&config).unwrap();
+
+    c.bench_function("async_log_single", |b| {
+        b.iter(|| {
+            logger.log_access(
+                std::hint::black_box("read"),
+                std::hint::black_box("/bench/file.txt"),
+                1000, 1000, std::hint::black_box("success"), None
+            )
+        })
+    });
+
+    // Cleanup
+    let _ = logger.flush_all();
+}
+
+criterion_group!(benches, bench_blake3_encryption, bench_async_logging);
 criterion_main!(benches);
 ```
+
+### Benchmark Results Summary
+
+- **Encryption**: BLAKE3 nonce generation provides cryptographic security with acceptable performance overhead
+- **Async Logging**: Channel-based architecture eliminates lock contention in concurrent scenarios
+- **File Operations**: Partial write support adds POSIX compliance with reasonable performance cost
+- **Security Checks**: Fine-grained permission validation ensures enterprise-grade access control
+
+See README.md for detailed benchmark results and performance analysis.
