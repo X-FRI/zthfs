@@ -83,22 +83,33 @@ impl IntegrityHandler {
 
     /// Validate the integrity configuration.
     pub fn validate_config(config: &IntegrityConfig) -> ZthfsResult<()> {
-        if config.enabled && config.xattr_namespace.is_empty() {
-            return Err(ZthfsError::Config(
-                "xattr namespace cannot be empty when integrity is enabled".to_string(),
-            ));
+        if config.enabled {
+            if config.xattr_namespace.is_empty() {
+                return Err(ZthfsError::Config(
+                    "xattr namespace cannot be empty when integrity is enabled".to_string(),
+                ));
+            }
+            if !Self::is_algorithm_supported(&config.algorithm) {
+                return Err(ZthfsError::Config(format!(
+                    "Unsupported integrity algorithm: {}. Supported algorithms: {:?}",
+                    config.algorithm,
+                    Self::supported_algorithms()
+                )));
+            }
         }
         Ok(())
     }
 
     /// Supported checksum algorithms.
+    /// Only algorithms that are actually implemented are listed here.
     pub fn supported_algorithms() -> Vec<&'static str> {
-        vec!["crc32c", "sha256", "blake2"]
+        vec!["crc32c"] // Currently only CRC32c is implemented
     }
 
     /// Check if the algorithm is supported.
+    /// This method checks against the actually implemented algorithms.
     pub fn is_algorithm_supported(algorithm: &str) -> bool {
-        matches!(algorithm.to_lowercase().as_str(), "crc32c")
+        Self::supported_algorithms().contains(&algorithm.to_lowercase().as_str())
     }
 }
 
@@ -154,6 +165,8 @@ mod tests {
         assert!(IntegrityHandler::is_algorithm_supported("CRC32C"));
         assert!(!IntegrityHandler::is_algorithm_supported("md5"));
         assert!(!IntegrityHandler::is_algorithm_supported("sha1"));
+        assert!(!IntegrityHandler::is_algorithm_supported("sha256"));
+        assert!(!IntegrityHandler::is_algorithm_supported("blake2"));
     }
 
     #[test]
@@ -161,5 +174,37 @@ mod tests {
         let algorithms = IntegrityHandler::supported_algorithms();
         assert!(algorithms.contains(&"crc32c"));
         assert!(!algorithms.is_empty());
+        assert_eq!(algorithms.len(), 1); // Currently only crc32c is implemented
+    }
+
+    #[test]
+    fn test_config_validation_algorithm_check() {
+        // Valid configuration
+        let config = IntegrityConfig::default();
+        assert!(IntegrityHandler::validate_config(&config).is_ok());
+
+        // Invalid algorithm
+        let config = IntegrityConfig {
+            enabled: true,
+            algorithm: "sha256".to_string(),
+            xattr_namespace: "user.zthfs".to_string(),
+        };
+        assert!(IntegrityHandler::validate_config(&config).is_err());
+
+        // Empty namespace when enabled
+        let config = IntegrityConfig {
+            enabled: true,
+            algorithm: "crc32c".to_string(),
+            xattr_namespace: "".to_string(),
+        };
+        assert!(IntegrityHandler::validate_config(&config).is_err());
+
+        // Disabled integrity should always be valid even with invalid settings
+        let config = IntegrityConfig {
+            enabled: false,
+            algorithm: "invalid".to_string(),
+            xattr_namespace: "".to_string(),
+        };
+        assert!(IntegrityHandler::validate_config(&config).is_ok());
     }
 }
