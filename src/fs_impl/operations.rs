@@ -25,9 +25,6 @@ struct ChunkedFileMetadata {
 pub struct FileSystemOperations;
 
 impl FileSystemOperations {
-    /// Default chunk size for tests (4MB)
-    const DEFAULT_CHUNK_SIZE: usize = 4 * 1024 * 1024;
-
     /// Get chunk size from filesystem configuration
     fn get_chunk_size(fs: &Zthfs) -> usize {
         fs.config.performance.chunk_size
@@ -36,12 +33,6 @@ impl FileSystemOperations {
     /// Check if chunking is enabled
     fn is_chunking_enabled(fs: &Zthfs) -> bool {
         fs.config.performance.chunk_size > 0
-    }
-
-    /// Get chunk size with fallback for tests
-    fn get_chunk_size_or_default(fs: Option<&Zthfs>) -> usize {
-        fs.map(|f| Self::get_chunk_size(f))
-            .unwrap_or(Self::DEFAULT_CHUNK_SIZE)
     }
 
     /// Metadata file suffix for storing file metadata
@@ -881,14 +872,14 @@ mod tests {
         let (_temp_dir, fs) = create_test_fs();
 
         // Create a file larger than chunk size
-        let file_size = FileSystemOperations::get_chunk_size_or_default(Some(&fs)) * 3 + 500;
+        let chunk_size = fs.config.performance.chunk_size;
+        let file_size = chunk_size * 3 + 500;
         let large_data: Vec<u8> = (0..file_size).map(|i| (i % 256) as u8).collect();
 
         let test_path = Path::new("/large_partial.dat");
         FileSystemOperations::write_file_chunked(&fs, test_path, &large_data).unwrap();
 
         // Test reading from different offsets
-        let chunk_size = FileSystemOperations::get_chunk_size_or_default(Some(&fs));
         let test_cases = vec![
             (0, 100),                             // Beginning
             (1000, 2000),                         // Middle of first chunk
@@ -962,7 +953,7 @@ mod tests {
         let (_temp_dir, fs) = create_test_fs();
 
         // Test various file sizes
-        let chunk_size = FileSystemOperations::get_chunk_size_or_default(Some(&fs));
+        let chunk_size = fs.config.performance.chunk_size;
         let test_cases = vec![
             (0, "empty"),
             (1, "single_byte"),
