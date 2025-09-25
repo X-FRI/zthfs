@@ -20,7 +20,7 @@ echo "✅ Build successful"
 # Run demo
 echo ""
 echo "🚀 Run feature demo..."
-./target/release/zthfs
+./target/release/zthfs demo
 
 echo ""
 echo "📊 Check generated files..."
@@ -43,10 +43,17 @@ else
 fi
 
 # Check stored file
-if [ -f "/tmp/zthfs_data/patient_record_001.txt" ]; then
-    echo "✅ Encrypted file created: /tmp/zthfs_data/patient_record_001.txt"
+if [ -f "/tmp/zthfs_data/patient_record.txt" ]; then
+    echo "✅ Encrypted file created: /tmp/zthfs_data/patient_record.txt"
     echo "🔒 File content (encrypted):"
-    hexdump -C /tmp/zthfs_data/patient_record_001.txt | head -2
+    hexdump -C /tmp/zthfs_data/patient_record.txt | head -2
 else
     echo "❌ Encrypted file not found"
 fi
+
+echo ""
+echo "🧹 Cleaning up demo files..."
+rm -rf /tmp/zthfs_data
+rm -rf /tmp/zthfs_mount
+rm -f /tmp/zthfs_demo.log
+echo "✅ Demo cleanup completed"

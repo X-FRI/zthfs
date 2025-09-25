@@ -213,23 +213,23 @@ fn run_health_check() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_demo() -> Result<(), Box<dyn std::error::Error>> {
     use std::fs;
-    use tempfile::tempdir;
     use zthfs::{config::FilesystemConfigBuilder, operations::FileSystemOperations};
 
     info!("Running ZTHFS demonstration");
 
-    let temp_dir = tempdir()?;
-    let data_dir = temp_dir.path().join("data");
-    let mount_point = temp_dir.path().join("mount");
+    // Use fixed demo paths for testing
+    let data_dir = Path::new("/tmp/zthfs_data");
+    let mount_point = Path::new("/tmp/zthfs_mount");
+    let log_file = Path::new("/tmp/zthfs_demo.log");
 
     // Create directories
-    fs::create_dir_all(&data_dir)?;
-    fs::create_dir_all(&mount_point)?;
+    fs::create_dir_all(data_dir)?;
+    fs::create_dir_all(mount_point)?;
 
-    // Create configuration
-    let log_dir = temp_dir.path().join("logs");
-    fs::create_dir_all(&log_dir)?;
-    let log_file = log_dir.join("demo.log");
+    // Ensure log file directory exists
+    if let Some(parent) = log_file.parent() {
+        fs::create_dir_all(parent)?;
+    }
 
     let config = FilesystemConfigBuilder::new()
         .data_dir(data_dir.to_string_lossy().to_string())
@@ -275,11 +275,6 @@ fn run_demo() -> Result<(), Box<dyn std::error::Error>> {
     println!("📋 Copied file to: {}", dest_file.display());
 
     println!("\n🎉 Demo completed successfully!");
-    println!("Features demonstrated:");
-    println!("  ✓ Transparent AES-256-GCM encryption");
-    println!("  ✓ Data integrity verification with CRC32c");
-    println!("  ✓ File and directory operations");
-    println!("  ✓ Copy operations");
 
     Ok(())
 }
@@ -288,13 +283,6 @@ fn show_system_info() -> Result<(), Box<dyn std::error::Error>> {
     println!("ZTHFS - Zero-Trust Healthcare File System");
     println!("Version: {VERSION}");
     println!("Build Info: {}", zthfs::BUILD_INFO);
-
-    println!("\nCore Features:");
-    println!("  • Transparent encryption with AES-256-GCM");
-    println!("  • Data integrity verification with CRC32c");
-    println!("  • Comprehensive access logging");
-    println!("  • HIPAA/GDPR compliance");
-    println!("  • FUSE-based filesystem integration");
 
     println!("\nUsage:");
     println!("  zthfs init <config_path>     - Initialize configuration");
