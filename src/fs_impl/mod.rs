@@ -361,7 +361,7 @@ impl Filesystem for Zthfs {
                         uid,
                         gid,
                         "success",
-                        Some(format!("offset={}, bytes={}", _offset, bytes_written)),
+                        Some(format!("offset={_offset}, bytes={bytes_written}")),
                     )
                     .unwrap_or(());
 

@@ -97,7 +97,7 @@ pub struct LogHandler {
 
 #[derive(Debug)]
 enum LogMessage {
-    LogEntry(StructuredLogEntry),
+    LogEntry(Box<StructuredLogEntry>),
     Flush,
     Shutdown,
 }
@@ -156,7 +156,7 @@ impl LogHandler {
         receiver: Receiver<LogMessage>,
         mut writer: BufWriter<std::fs::File>,
     ) {
-        let mut buffer = VecDeque::new();
+        let mut buffer = VecDeque::<Box<StructuredLogEntry>>::new();
         const BATCH_SIZE: usize = 100;
 
         loop {
@@ -169,21 +169,21 @@ impl LogHandler {
                     Ok(LogMessage::Flush) => {
                         // Flush all pending messages
                         if let Err(e) = Self::flush_buffer(&mut writer, &mut buffer, &config) {
-                            log::error!("Failed to flush log buffer: {}", e);
+                            log::error!("Failed to flush log buffer: {e}");
                         }
                         break;
                     }
                     Ok(LogMessage::Shutdown) => {
                         // Flush remaining messages and exit
                         if let Err(e) = Self::flush_buffer(&mut writer, &mut buffer, &config) {
-                            log::error!("Failed to flush log buffer on shutdown: {}", e);
+                            log::error!("Failed to flush log buffer on shutdown: {e}");
                         }
                         return;
                     }
                     Err(_) => {
                         // Channel closed, flush and exit
                         if let Err(e) = Self::flush_buffer(&mut writer, &mut buffer, &config) {
-                            log::error!("Failed to flush log buffer on channel close: {}", e);
+                            log::error!("Failed to flush log buffer on channel close: {e}");
                         }
                         return;
                     }
@@ -192,7 +192,7 @@ impl LogHandler {
 
             // Flush the batch
             if let Err(e) = Self::flush_buffer(&mut writer, &mut buffer, &config) {
-                log::error!("Failed to flush log buffer: {}", e);
+                log::error!("Failed to flush log buffer: {e}");
             }
         }
     }
@@ -200,7 +200,7 @@ impl LogHandler {
     /// Flush a batch of log entries to disk
     fn flush_buffer(
         writer: &mut BufWriter<std::fs::File>,
-        buffer: &mut VecDeque<StructuredLogEntry>,
+        buffer: &mut VecDeque<Box<StructuredLogEntry>>,
         config: &LogConfig,
     ) -> ZthfsResult<()> {
         if buffer.is_empty() {
@@ -211,14 +211,14 @@ impl LogHandler {
         for entry in buffer.drain(..) {
             let json_line = serde_json::to_string(&entry)
                 .map_err(|e| ZthfsError::Serialization(e.to_string()))?;
-            writeln!(writer, "{}", json_line)?;
+            writeln!(writer, "{json_line}")?;
         }
 
         writer.flush()?;
 
         // Check if log rotation is needed
-        if let Err(e) = Self::rotate_if_needed_static(&config) {
-            log::error!("Failed to rotate log file: {}", e);
+        if let Err(e) = Self::rotate_if_needed_static(config) {
+            log::error!("Failed to rotate log file: {e}");
         }
 
         Ok(())
@@ -321,9 +321,11 @@ impl LogHandler {
         };
 
         // Send log entry to the async worker thread
-        self.sender.send(LogMessage::LogEntry(entry)).map_err(|_| {
-            ZthfsError::Log("Failed to send log message to worker thread".to_string())
-        })?;
+        self.sender
+            .send(LogMessage::LogEntry(Box::new(entry)))
+            .map_err(|_| {
+                ZthfsError::Log("Failed to send log message to worker thread".to_string())
+            })?;
 
         Ok(())
     }

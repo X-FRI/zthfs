@@ -130,13 +130,7 @@ impl FileSystemOperations {
     /// This enables proper POSIX write semantics with offset support.
     pub fn write_partial(fs: &Zthfs, path: &Path, offset: i64, data: &[u8]) -> ZthfsResult<u32> {
         // Read the current file content
-        let current_data = match Self::read_file(fs, path) {
-            Ok(data) => data,
-            Err(_) => {
-                // File doesn't exist or other error, treat as empty file
-                Vec::new()
-            }
-        };
+        let current_data = Self::read_file(fs, path).unwrap_or_default();
 
         let offset = offset as usize;
         let new_size = std::cmp::max(current_data.len(), offset + data.len());

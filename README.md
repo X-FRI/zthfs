@@ -36,7 +36,7 @@ graph TD
     end
 
     subgraph Kernel VFS
-        C[POSIX Interface<br/>(Full Read/Write Semantics)]
+        C["POSIX Interface<br/>(Full Read/Write Semantics)"]
     end
 
     subgraph Storage Layer

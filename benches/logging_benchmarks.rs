@@ -51,7 +51,7 @@ fn bench_log_batch_messages(c: &mut Criterion) {
     c.bench_function("async_log_batch_100_messages", |b| {
         b.iter(|| {
             for i in 0..100 {
-                let path = format!("/test/file_{}.txt", i);
+                let path = format!("/test/file_{i}.txt");
                 let _ = logger.log_access(
                     std::hint::black_box("read"),
                     std::hint::black_box(&path),
