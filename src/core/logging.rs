@@ -1,11 +1,12 @@
 use crate::config::LogConfig;
 use crate::errors::{ZthfsError, ZthfsResult};
+use crossbeam_channel::{Receiver, Sender, bounded};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs::{self, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::thread;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AccessLogEntry {
@@ -90,23 +91,29 @@ pub struct StructuredLogEntry {
 
 pub struct LogHandler {
     config: LogConfig,
-    writer: Arc<Mutex<BufWriter<Box<dyn std::io::Write + Send>>>>,
-    pending_logs: Arc<Mutex<VecDeque<StructuredLogEntry>>>,
-    batch_size: usize,
+    sender: Sender<LogMessage>,
+    _handle: Option<thread::JoinHandle<()>>, // Keep handle to prevent thread from being detached
+}
+
+#[derive(Debug)]
+enum LogMessage {
+    LogEntry(StructuredLogEntry),
+    Flush,
+    Shutdown,
 }
 
 impl LogHandler {
-    /// Create new log handler
+    /// Create new async log handler
     pub fn new(config: &LogConfig) -> ZthfsResult<Self> {
+        // Create a bounded channel for log messages (buffered to prevent blocking)
+        let (sender, receiver) = bounded::<LogMessage>(1000);
+
         if !config.enabled {
-            // If logging is disabled, return a virtual log handler
-            // This handler will not actually write any logs
-            let null_writer: Box<dyn std::io::Write + Send> = Box::new(std::io::sink());
+            // If logging is disabled, create a dummy handler that discards messages
             return Ok(Self {
                 config: config.clone(),
-                writer: Arc::new(Mutex::new(BufWriter::new(null_writer))),
-                pending_logs: Arc::new(Mutex::new(VecDeque::new())),
-                batch_size: 100,
+                sender,
+                _handle: None,
             });
         }
 
@@ -121,23 +128,154 @@ impl LogHandler {
             .append(true)
             .open(&config.file_path)?;
 
-        let writer = Arc::new(Mutex::new(BufWriter::new(
-            Box::new(file) as Box<dyn std::io::Write + Send>
-        )));
+        let writer = BufWriter::new(file);
+        let config_clone = config.clone();
+
+        // Spawn the logging thread
+        let handle = thread::spawn(move || {
+            Self::logging_worker(config_clone, receiver, writer);
+        });
 
         Ok(Self {
             config: config.clone(),
-            writer,
-            pending_logs: Arc::new(Mutex::new(VecDeque::new())),
-            batch_size: 100, // Default batch size
+            sender,
+            _handle: Some(handle),
         })
     }
 
     /// Create log handler with batch size
-    pub fn with_batch_size(config: &LogConfig, batch_size: usize) -> ZthfsResult<Self> {
-        let mut handler = Self::new(config)?;
-        handler.batch_size = batch_size;
+    pub fn with_batch_size(config: &LogConfig, _batch_size: usize) -> ZthfsResult<Self> {
+        let handler = Self::new(config)?;
+        // Batch size is now handled in the worker thread
         Ok(handler)
+    }
+
+    /// The logging worker thread that processes log messages asynchronously
+    fn logging_worker(
+        config: LogConfig,
+        receiver: Receiver<LogMessage>,
+        mut writer: BufWriter<std::fs::File>,
+    ) {
+        let mut buffer = VecDeque::new();
+        const BATCH_SIZE: usize = 100;
+
+        loop {
+            // Collect messages until we have a batch or receive a flush/shutdown
+            while buffer.len() < BATCH_SIZE {
+                match receiver.recv() {
+                    Ok(LogMessage::LogEntry(entry)) => {
+                        buffer.push_back(entry);
+                    }
+                    Ok(LogMessage::Flush) => {
+                        // Flush all pending messages
+                        if let Err(e) = Self::flush_buffer(&mut writer, &mut buffer, &config) {
+                            log::error!("Failed to flush log buffer: {}", e);
+                        }
+                        break;
+                    }
+                    Ok(LogMessage::Shutdown) => {
+                        // Flush remaining messages and exit
+                        if let Err(e) = Self::flush_buffer(&mut writer, &mut buffer, &config) {
+                            log::error!("Failed to flush log buffer on shutdown: {}", e);
+                        }
+                        return;
+                    }
+                    Err(_) => {
+                        // Channel closed, flush and exit
+                        if let Err(e) = Self::flush_buffer(&mut writer, &mut buffer, &config) {
+                            log::error!("Failed to flush log buffer on channel close: {}", e);
+                        }
+                        return;
+                    }
+                }
+            }
+
+            // Flush the batch
+            if let Err(e) = Self::flush_buffer(&mut writer, &mut buffer, &config) {
+                log::error!("Failed to flush log buffer: {}", e);
+            }
+        }
+    }
+
+    /// Flush a batch of log entries to disk
+    fn flush_buffer(
+        writer: &mut BufWriter<std::fs::File>,
+        buffer: &mut VecDeque<StructuredLogEntry>,
+        config: &LogConfig,
+    ) -> ZthfsResult<()> {
+        if buffer.is_empty() {
+            return Ok(());
+        }
+
+        // Write all entries in the buffer
+        for entry in buffer.drain(..) {
+            let json_line = serde_json::to_string(&entry)
+                .map_err(|e| ZthfsError::Serialization(e.to_string()))?;
+            writeln!(writer, "{}", json_line)?;
+        }
+
+        writer.flush()?;
+
+        // Check if log rotation is needed
+        if let Err(e) = Self::rotate_if_needed_static(&config) {
+            log::error!("Failed to rotate log file: {}", e);
+        }
+
+        Ok(())
+    }
+
+    /// Static version of rotate_if_needed for use in worker thread
+    fn rotate_if_needed_static(config: &LogConfig) -> ZthfsResult<()> {
+        let _rotated = Self::rotate_log_file_static(config)?;
+        Ok(())
+    }
+
+    /// Static version of rotate_log_file for use in worker thread
+    /// Returns true if rotation occurred and file needs to be reopened
+    fn rotate_log_file_static(config: &LogConfig) -> ZthfsResult<bool> {
+        let base_path = Path::new(&config.file_path);
+        let extension = base_path.extension().unwrap_or_default();
+
+        // Check if rotation is needed
+        let metadata = std::fs::metadata(&config.file_path)?;
+        if metadata.len() <= config.max_size {
+            return Ok(false);
+        }
+
+        // Delete the oldest log file
+        for i in (1..=config.rotation_count).rev() {
+            let old_file = if i == 1 {
+                base_path.with_extension(format!("{}.1", extension.to_string_lossy()))
+            } else {
+                base_path.with_extension(format!("{}.{}", i, extension.to_string_lossy()))
+            };
+
+            if old_file.exists() {
+                if i == config.rotation_count {
+                    fs::remove_file(&old_file)?;
+                } else {
+                    let new_file = base_path.with_extension(format!(
+                        "{}.{}",
+                        i + 1,
+                        extension.to_string_lossy()
+                    ));
+                    fs::rename(&old_file, &new_file)?;
+                }
+            }
+        }
+
+        // Rename the current file to .1
+        let rotated_file = base_path.with_extension(format!("{}.1", extension.to_string_lossy()));
+        fs::rename(&config.file_path, &rotated_file)?;
+
+        // Create a new log file
+        OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&config.file_path)?;
+
+        Ok(true)
     }
 
     pub fn log_access(
@@ -182,17 +320,10 @@ impl LogHandler {
             checksum: params.checksum,
         };
 
-        // Add to the pending logs queue
-        if let Ok(mut logs) = self.pending_logs.lock() {
-            logs.push_back(entry);
-
-            // If the number of logs reaches the batch size, write immediately
-            if logs.len() >= self.batch_size {
-                let logs_to_write: Vec<_> = logs.drain(..self.batch_size).collect();
-                drop(logs);
-                self.flush_logs(&logs_to_write)?;
-            }
-        }
+        // Send log entry to the async worker thread
+        self.sender.send(LogMessage::LogEntry(entry)).map_err(|_| {
+            ZthfsError::Log("Failed to send log message to worker thread".to_string())
+        })?;
 
         Ok(())
     }
@@ -235,99 +366,29 @@ impl LogHandler {
         })
     }
 
-    /// Write a batch of log entries to the log file.
-    /// It will serialize each log entry to a JSON string, then write it to the file and flush the buffer.
-    /// After writing, it will check if the log file needs to be rotated.
-    pub fn flush_logs(&self, logs: &[StructuredLogEntry]) -> ZthfsResult<()> {
-        if !self.config.enabled || logs.is_empty() {
+    /// Flush all pending log messages to disk (async operation)
+    pub fn flush_logs(&self) -> ZthfsResult<()> {
+        if !self.config.enabled {
             return Ok(());
         }
 
-        let mut writer = self
-            .writer
-            .lock()
-            .map_err(|_| ZthfsError::Log("Failed to acquire writer lock".to_string()))?;
-
-        for log in logs {
-            let json_line =
-                serde_json::to_string(log).map_err(|e| ZthfsError::Serialization(e.to_string()))?;
-            writeln!(writer, "{json_line}")?;
-        }
-
-        writer.flush()?;
-
-        // Check if the log file needs to be rotated
-        self.rotate_if_needed()?;
+        // Send flush message to worker thread
+        self.sender.send(LogMessage::Flush).map_err(|_| {
+            ZthfsError::Log("Failed to send flush message to worker thread".to_string())
+        })?;
 
         Ok(())
     }
 
-    /// Check if the log file needs to be rotated
-    pub fn rotate_if_needed(&self) -> ZthfsResult<()> {
-        let metadata = std::fs::metadata(&self.config.file_path)?;
-        if metadata.len() > self.config.max_size {
-            self.rotate_log_file()?;
-        }
-        Ok(())
-    }
-
-    /// Rotate the log file
-    pub fn rotate_log_file(&self) -> ZthfsResult<()> {
-        let base_path = Path::new(&self.config.file_path);
-        let extension = base_path.extension().unwrap_or_default();
-        let _stem = base_path.file_stem().unwrap_or_default();
-
-        // Delete the oldest log file
-        for i in (1..=self.config.rotation_count).rev() {
-            let old_file = if i == 1 {
-                base_path.with_extension(format!("{}.1", extension.to_string_lossy()))
-            } else {
-                base_path.with_extension(format!("{}.{}", i, extension.to_string_lossy()))
-            };
-
-            if old_file.exists() {
-                if i == self.config.rotation_count {
-                    fs::remove_file(&old_file)?;
-                } else {
-                    let new_file = base_path.with_extension(format!(
-                        "{}.{}",
-                        i + 1,
-                        extension.to_string_lossy()
-                    ));
-                    fs::rename(&old_file, &new_file)?;
-                }
-            }
-        }
-
-        // Rename the current file to .1
-        let rotated_file = base_path.with_extension(format!("{}.1", extension.to_string_lossy()));
-        fs::rename(&self.config.file_path, &rotated_file)?;
-
-        // Create a new log file
-        let new_file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&self.config.file_path)?;
-
-        let mut writer = self
-            .writer
-            .lock()
-            .map_err(|_| ZthfsError::Log("Failed to acquire writer lock".to_string()))?;
-        *writer = BufWriter::new(Box::new(new_file) as Box<dyn std::io::Write + Send>);
-
-        Ok(())
-    }
-
-    /// Flush all pending logs
+    /// Flush all pending log messages and shutdown the worker thread
     pub fn flush_all(&self) -> ZthfsResult<()> {
-        if let Ok(mut logs) = self.pending_logs.lock()
-            && !logs.is_empty()
-        {
-            let logs_to_write = logs.drain(..).collect::<Vec<_>>();
-            drop(logs);
-            self.flush_logs(&logs_to_write)?;
+        if !self.config.enabled {
+            return Ok(());
         }
+
+        // Send shutdown message to worker thread
+        let _ = self.sender.send(LogMessage::Shutdown);
+
         Ok(())
     }
 
