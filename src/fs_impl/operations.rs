@@ -25,8 +25,24 @@ struct ChunkedFileMetadata {
 pub struct FileSystemOperations;
 
 impl FileSystemOperations {
-    /// Chunk size for file chunking (4MB)
-    const CHUNK_SIZE: usize = 4 * 1024 * 1024;
+    /// Default chunk size for tests (4MB)
+    const DEFAULT_CHUNK_SIZE: usize = 4 * 1024 * 1024;
+
+    /// Get chunk size from filesystem configuration
+    fn get_chunk_size(fs: &Zthfs) -> usize {
+        fs.config.performance.chunk_size
+    }
+
+    /// Check if chunking is enabled
+    fn is_chunking_enabled(fs: &Zthfs) -> bool {
+        fs.config.performance.chunk_size > 0
+    }
+
+    /// Get chunk size with fallback for tests
+    fn get_chunk_size_or_default(fs: Option<&Zthfs>) -> usize {
+        fs.map(|f| Self::get_chunk_size(f))
+            .unwrap_or(Self::DEFAULT_CHUNK_SIZE)
+    }
 
     /// Metadata file suffix for storing file metadata
     const METADATA_SUFFIX: &str = ".zthfs_meta";
@@ -125,7 +141,7 @@ impl FileSystemOperations {
         let real_path = Self::virtual_to_real(fs, path);
 
         // Check file size to decide whether to use chunking
-        if data.len() > Self::CHUNK_SIZE {
+        if Self::is_chunking_enabled(fs) && data.len() > Self::get_chunk_size(fs) {
             // Use chunked writing for large files
             return Self::write_file_chunked(fs, path, data);
         }
@@ -435,7 +451,7 @@ impl FileSystemOperations {
             fs::create_dir_all(parent)?;
         }
 
-        let chunk_size = Self::CHUNK_SIZE;
+        let chunk_size = Self::get_chunk_size(fs);
         let total_chunks = data.len().div_ceil(chunk_size);
 
         // Create metadata
@@ -596,7 +612,7 @@ mod tests {
         let (_temp_dir, fs) = create_test_fs();
 
         // Create large file that will be chunked (> 4MB)
-        let chunk_size = FileSystemOperations::CHUNK_SIZE;
+        let chunk_size = FileSystemOperations::get_chunk_size(&fs);
         let large_data = vec![0x42u8; chunk_size * 2 + 1024]; // > 8MB
 
         let test_path = Path::new("/large_file.dat");
@@ -646,7 +662,7 @@ mod tests {
         assert_eq!(small_read, small_data);
 
         // Test chunked file (> 4MB)
-        let large_data = vec![0x42u8; FileSystemOperations::CHUNK_SIZE + 1024];
+        let large_data = vec![0x42u8; FileSystemOperations::get_chunk_size(&fs) + 1024];
         let large_path = Path::new("/large_file.dat");
 
         FileSystemOperations::write_file(&fs, large_path, &large_data).unwrap();
@@ -815,7 +831,7 @@ mod tests {
         let (_temp_dir, fs) = create_test_fs();
 
         // Create large file for chunked storage
-        let large_data = vec![0x55u8; FileSystemOperations::CHUNK_SIZE + 1000];
+        let large_data = vec![0x55u8; FileSystemOperations::get_chunk_size(&fs) + 1000];
         let test_path = Path::new("/chunked_integrity.dat");
 
         FileSystemOperations::write_file_chunked(&fs, test_path, &large_data).unwrap();
@@ -865,19 +881,20 @@ mod tests {
         let (_temp_dir, fs) = create_test_fs();
 
         // Create a file larger than chunk size
-        let file_size = FileSystemOperations::CHUNK_SIZE * 3 + 500;
+        let file_size = FileSystemOperations::get_chunk_size_or_default(Some(&fs)) * 3 + 500;
         let large_data: Vec<u8> = (0..file_size).map(|i| (i % 256) as u8).collect();
 
         let test_path = Path::new("/large_partial.dat");
         FileSystemOperations::write_file_chunked(&fs, test_path, &large_data).unwrap();
 
         // Test reading from different offsets
+        let chunk_size = FileSystemOperations::get_chunk_size_or_default(Some(&fs));
         let test_cases = vec![
-            (0, 100),                                                   // Beginning
-            (1000, 2000),                                               // Middle of first chunk
-            (FileSystemOperations::CHUNK_SIZE as i64, 100),             // Start of second chunk
-            ((FileSystemOperations::CHUNK_SIZE * 2 + 100) as i64, 300), // Middle of third chunk
-            ((file_size - 50) as i64, 50),                              // End of file
+            (0, 100),                             // Beginning
+            (1000, 2000),                         // Middle of first chunk
+            (chunk_size as i64, 100),             // Start of second chunk
+            ((chunk_size * 2 + 100) as i64, 300), // Middle of third chunk
+            ((file_size - 50) as i64, 50),        // End of file
         ];
 
         for (offset, size) in test_cases {
@@ -945,15 +962,16 @@ mod tests {
         let (_temp_dir, fs) = create_test_fs();
 
         // Test various file sizes
+        let chunk_size = FileSystemOperations::get_chunk_size_or_default(Some(&fs));
         let test_cases = vec![
             (0, "empty"),
             (1, "single_byte"),
             (1023, "small"),
             (1024, "one_kilobyte"),
-            (FileSystemOperations::CHUNK_SIZE - 1, "just_under_chunk"),
-            (FileSystemOperations::CHUNK_SIZE, "exactly_chunk"),
-            (FileSystemOperations::CHUNK_SIZE + 1, "just_over_chunk"),
-            (FileSystemOperations::CHUNK_SIZE * 2, "two_chunks"),
+            (chunk_size - 1, "just_under_chunk"),
+            (chunk_size, "exactly_chunk"),
+            (chunk_size + 1, "just_over_chunk"),
+            (chunk_size * 2, "two_chunks"),
         ];
 
         for (size, description) in test_cases {
@@ -1096,7 +1114,7 @@ mod tests {
         let (_temp_dir, fs) = create_test_fs();
 
         // Create chunked file
-        let large_data = vec![0x77u8; FileSystemOperations::CHUNK_SIZE * 2 + 500];
+        let large_data = vec![0x77u8; FileSystemOperations::get_chunk_size(&fs) * 2 + 500];
         let file_path = Path::new("/chunked_metadata.dat");
 
         FileSystemOperations::write_file_chunked(&fs, file_path, &large_data).unwrap();
@@ -1109,7 +1127,10 @@ mod tests {
         let metadata = FileSystemOperations::load_metadata(&fs, file_path).unwrap();
         assert_eq!(metadata.size, large_data.len() as u64);
         assert_eq!(metadata.chunk_count, 3); // 2 full chunks + 1 partial
-        assert_eq!(metadata.chunk_size, FileSystemOperations::CHUNK_SIZE);
+        assert_eq!(
+            metadata.chunk_size,
+            FileSystemOperations::get_chunk_size(&fs)
+        );
         assert!(metadata.mtime > 0);
 
         // Verify chunk files exist

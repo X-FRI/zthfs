@@ -76,6 +76,8 @@ pub struct PerformanceConfig {
     pub block_size: u32,
     /// Prefetch size
     pub prefetch_size: usize,
+    /// Chunk size for file chunking (bytes, 0 to disable)
+    pub chunk_size: usize,
 }
 
 impl Default for PerformanceConfig {
@@ -85,6 +87,7 @@ impl Default for PerformanceConfig {
             max_concurrent_ops: 100,
             block_size: 4096,
             prefetch_size: 8192,
+            chunk_size: 4 * 1024 * 1024, // 4MB default chunk size
         }
     }
 }
