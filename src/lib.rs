@@ -110,3 +110,68 @@ pub fn health_check() -> ZthfsResult<String> {
 
     Ok(checks.join("\n"))
 }
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use crate::fs_impl::security::FileAccess;
+
+    #[test]
+    fn test_security_integration() {
+        // Test permission checks without creating actual filesystem
+        let validator = crate::fs_impl::security::SecurityValidator::new(SecurityConfig {
+            allowed_users: vec![1000],
+            allowed_groups: vec![1000],
+            ..Default::default()
+        });
+
+        // Test permission checks
+        assert!(validator.check_file_permission(1000, 1000, 0o644, FileAccess::Read));
+        assert!(validator.check_file_permission(1000, 1000, 0o644, FileAccess::Write));
+        assert!(!validator.check_file_permission(1000, 1000, 0o644, FileAccess::Execute)); // No execute permission
+        assert!(!validator.check_file_permission(2000, 2000, 0o777, FileAccess::Read)); // User not allowed
+    }
+
+    #[test]
+    fn test_configuration_validation() {
+        // Test invalid configurations are caught
+        let invalid_config = FilesystemConfig {
+            data_dir: String::new(), // Empty data directory
+            mount_point: "/mnt/test".to_string(),
+            encryption: EncryptionConfig::with_random_keys(),
+            logging: LogConfig::default(),
+            integrity: IntegrityConfig::default(),
+            performance: PerformanceConfig::default(),
+            security: SecurityConfig::default(),
+        };
+
+        assert!(invalid_config.validate().is_err());
+
+        // Test invalid integrity algorithm
+        let invalid_integrity_config = FilesystemConfig {
+            data_dir: "/tmp/test".to_string(),
+            mount_point: "/mnt/test".to_string(),
+            encryption: EncryptionConfig::with_random_keys(),
+            logging: LogConfig::default(),
+            integrity: IntegrityConfig {
+                enabled: true,
+                algorithm: "invalid_algorithm".to_string(),
+                xattr_namespace: "user.zthfs".to_string(),
+            },
+            performance: PerformanceConfig::default(),
+            security: SecurityConfig::default(),
+        };
+
+        assert!(invalid_integrity_config.validate().is_err());
+
+        // Test valid configuration
+        let valid_config = FilesystemConfigBuilder::new()
+            .data_dir("/tmp/test".to_string())
+            .mount_point("/mnt/test".to_string())
+            .encryption(EncryptionConfig::with_random_keys())
+            .build()
+            .unwrap();
+
+        assert!(valid_config.validate().is_ok());
+    }
+}

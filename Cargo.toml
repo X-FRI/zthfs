@@ -45,6 +45,11 @@ name = "filesystem_benchmarks"
 harness = false
 path = "benches/filesystem_benchmarks.rs"
 
+[[bench]]
+name = "logging_benchmarks"
+harness = false
+path = "benches/logging_benchmarks.rs"
+
 [profile.release]
 opt-level = 3        # enable highest level of optimization
 lto = true           # enable link time optimization

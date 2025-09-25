@@ -89,22 +89,6 @@ impl EncryptionHandler {
         }
         Ok(())
     }
-
-    /// Generate random encryption key
-    pub fn generate_key() -> [u8; 32] {
-        use rand::RngCore;
-        let mut key = [0u8; 32];
-        rand::rng().fill_bytes(&mut key);
-        key
-    }
-
-    /// Generate random nonce seed
-    pub fn generate_nonce_seed() -> [u8; 12] {
-        use rand::RngCore;
-        let mut seed = [0u8; 12];
-        rand::rng().fill_bytes(&mut seed);
-        seed
-    }
 }
 
 #[cfg(test)]
@@ -143,7 +127,7 @@ mod tests {
     #[test]
     fn test_nonce_cryptographic_properties() {
         let config1 = EncryptionConfig::default();
-        let config2 = EncryptionConfig::default();
+        let config2 = EncryptionConfig::with_random_keys(); // Use different random keys
         let encryptor1 = EncryptionHandler::new(&config1);
         let encryptor2 = EncryptionHandler::new(&config2);
 
@@ -218,10 +202,48 @@ mod tests {
 
     #[test]
     fn test_key_generation() {
-        let key = EncryptionHandler::generate_key();
+        let key = crate::config::EncryptionConfig::generate_key();
         assert_eq!(key.len(), 32);
 
-        let nonce_seed = EncryptionHandler::generate_nonce_seed();
+        let nonce_seed = crate::config::EncryptionConfig::generate_nonce_seed();
         assert_eq!(nonce_seed.len(), 12);
+    }
+
+    #[test]
+    fn test_default_config_is_insecure() {
+        let default_config = EncryptionConfig::default();
+
+        // The default config should contain obviously insecure placeholder values
+        // This test ensures that default configs are clearly marked as insecure
+        assert_eq!(default_config.key.len(), 32);
+        assert_eq!(default_config.nonce_seed.len(), 12);
+
+        // Check for the repeating pattern in default key (DEADBEEF...)
+        assert_eq!(&default_config.key[0..4], &[0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(&default_config.key[4..8], &[0xDE, 0xAD, 0xBE, 0xEF]);
+
+        // Check for the repeating pattern in default nonce seed (BADCOFFE...)
+        assert_eq!(&default_config.nonce_seed[0..4], &[0xBA, 0xDC, 0x0F, 0xFE]);
+    }
+
+    #[test]
+    fn test_config_constructors() {
+        // Test new constructor
+        let key = vec![1u8; 32];
+        let nonce_seed = vec![2u8; 12];
+        let config = EncryptionConfig::new(key.clone(), nonce_seed.clone());
+        assert_eq!(config.key, key);
+        assert_eq!(config.nonce_seed, nonce_seed);
+
+        // Test with_random_keys constructor
+        let random_config = EncryptionConfig::with_random_keys();
+        assert_eq!(random_config.key.len(), 32);
+        assert_eq!(random_config.nonce_seed.len(), 12);
+        // Random keys should be different from default insecure values
+        assert_ne!(random_config.key, EncryptionConfig::default().key);
+        assert_ne!(
+            random_config.nonce_seed,
+            EncryptionConfig::default().nonce_seed
+        );
     }
 }
