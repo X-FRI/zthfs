@@ -34,6 +34,10 @@ enum Commands {
 
         /// Data directory
         data_dir: String,
+
+        /// Configuration file path
+        #[arg(short, long, default_value = "/etc/zthfs/config.json")]
+        config: String,
     },
 
     /// Unmount the filesystem
@@ -80,8 +84,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Mount {
             mount_point,
             data_dir,
+            config,
         } => {
-            mount_filesystem(&mount_point, &data_dir, &cli.config)?;
+            mount_filesystem(&mount_point, &data_dir, &config)?;
         }
 
         Commands::Unmount { mount_point } => {
@@ -130,19 +135,114 @@ fn mount_filesystem(
             .build()?
     };
 
-    // Create filesystem instance
-    let _fs = Zthfs::new(&config)?;
+    // Validate mount point exists and is a directory
+    let mount_path = Path::new(mount_point);
+    if !mount_path.exists() {
+        return Err(format!("Mount point {} does not exist", mount_point).into());
+    }
+    if !mount_path.is_dir() {
+        return Err(format!("Mount point {} is not a directory", mount_point).into());
+    }
 
-    // Mount with FUSE
-    info!("Filesystem mounted successfully at {mount_point}");
+    // Create filesystem instance
+    let mut fs = Zthfs::new(&config)?;
+
+    // Mount with FUSE - this will block until the filesystem is unmounted
+    info!("Starting FUSE mount at {mount_point}");
+    fuser::mount2(
+        fs,
+        mount_point,
+        &[
+            fuser::MountOption::FSName("zthfs".to_string()),
+            fuser::MountOption::Subtype("zthfs".to_string()),
+            fuser::MountOption::AllowOther,
+            fuser::MountOption::AutoUnmount,
+            fuser::MountOption::DefaultPermissions,
+        ],
+    )?;
+
+    info!("Filesystem unmounted successfully from {mount_point}");
     Ok(())
 }
 
 fn unmount_filesystem(mount_point: &str) -> Result<(), Box<dyn std::error::Error>> {
     info!("Unmounting ZTHFS at {mount_point}");
-    // Note: Actual unmounting would require platform-specific code
-    info!("Filesystem unmounted successfully");
-    Ok(())
+
+    // Validate mount point
+    let mount_path = Path::new(mount_point);
+    if !mount_path.exists() {
+        return Err(format!("Mount point {} does not exist", mount_point).into());
+    }
+
+    // Try to unmount using fusermount (Linux/macOS)
+    #[cfg(target_os = "linux")]
+    {
+        use std::process::Command;
+        match Command::new("fusermount")
+            .args(&["-u", mount_point])
+            .status()
+        {
+            Ok(status) if status.success() => {
+                info!("Filesystem unmounted successfully from {mount_point} using fusermount");
+                return Ok(());
+            }
+            Ok(_) => {
+                // fusermount failed, try umount
+                match Command::new("umount").arg(mount_point).status() {
+                    Ok(status) if status.success() => {
+                        info!("Filesystem unmounted successfully from {mount_point} using umount");
+                        Ok(())
+                    }
+                    Ok(_) => Err(format!(
+                        "Failed to unmount {}: umount command failed",
+                        mount_point
+                    )
+                    .into()),
+                    Err(e) => Err(format!("Failed to execute umount command: {}", e).into()),
+                }
+            }
+            Err(_) => {
+                // fusermount not available, try umount directly
+                match Command::new("umount").arg(mount_point).status() {
+                    Ok(status) if status.success() => {
+                        info!("Filesystem unmounted successfully from {mount_point} using umount");
+                        Ok(())
+                    }
+                    Ok(_) => Err(format!(
+                        "Failed to unmount {}: umount command failed",
+                        mount_point
+                    )
+                    .into()),
+                    Err(e) => Err(format!("Failed to execute umount command: {}", e).into()),
+                }
+            }
+        }
+    }
+
+    // For macOS, use diskutil
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        match Command::new("diskutil")
+            .args(&["unmount", "force", mount_point])
+            .status()
+        {
+            Ok(status) if status.success() => {
+                info!("Filesystem unmounted successfully from {mount_point} using diskutil");
+                Ok(())
+            }
+            Ok(_) => {
+                Err(format!("Failed to unmount {}: diskutil command failed", mount_point).into())
+            }
+            Err(e) => Err(format!("Failed to execute diskutil command: {}", e).into()),
+        }
+    }
+
+    // For other platforms or as fallback
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        Err("Automatic unmounting not supported on this platform. Please unmount manually.".into())
+    }
 }
 
 fn initialize_config(config_path: &str) -> Result<(), Box<dyn std::error::Error>> {

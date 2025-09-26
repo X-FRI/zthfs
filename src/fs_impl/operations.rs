@@ -105,17 +105,18 @@ impl FileSystemOperations {
         // Verify integrity
         if let Some(expected_checksum) =
             IntegrityHandler::get_checksum_from_xattr(&real_path, &fs.config.integrity)?
-            && !IntegrityHandler::verify_integrity(
+        {
+            if !IntegrityHandler::verify_integrity(
                 &encrypted_data,
                 &expected_checksum,
                 &fs.config.integrity.algorithm,
                 &fs.config.integrity.key,
-            )
-        {
-            log::warn!("Data integrity check failed for {path:?}");
-            return Err(ZthfsError::Integrity(
-                "Data integrity verification failed".to_string(),
-            ));
+            ) {
+                log::warn!("Data integrity check failed for {path:?}");
+                return Err(ZthfsError::Integrity(
+                    "Data integrity verification failed".to_string(),
+                ));
+            }
         }
 
         // Decrypt data
@@ -533,17 +534,18 @@ impl FileSystemOperations {
         // Verify integrity
         if let Some(expected_checksum) =
             IntegrityHandler::get_checksum_from_xattr(&chunk_path, &fs.config.integrity)?
-            && !IntegrityHandler::verify_integrity(
+        {
+            if !IntegrityHandler::verify_integrity(
                 &encrypted_data,
                 &expected_checksum,
                 &fs.config.integrity.algorithm,
                 &fs.config.integrity.key,
-            )
-        {
-            log::warn!("Data integrity check failed for chunk {chunk_index} of {path:?}");
-            return Err(ZthfsError::Integrity(format!(
-                "Data integrity verification failed for chunk {chunk_index}"
-            )));
+            ) {
+                log::warn!("Data integrity check failed for chunk {chunk_index} of {path:?}");
+                return Err(ZthfsError::Integrity(format!(
+                    "Data integrity verification failed for chunk {chunk_index}"
+                )));
+            }
         }
 
         // Decrypt data

@@ -67,6 +67,25 @@ impl From<Box<dyn std::error::Error + Send + Sync>> for ZthfsError {
     }
 }
 
+impl PartialEq for ZthfsError {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ZthfsError::Crypto(a), ZthfsError::Crypto(b)) => a == b,
+            (ZthfsError::Fs(a), ZthfsError::Fs(b)) => a == b,
+            (ZthfsError::Config(a), ZthfsError::Config(b)) => a == b,
+            (ZthfsError::Integrity(a), ZthfsError::Integrity(b)) => a == b,
+            (ZthfsError::Log(a), ZthfsError::Log(b)) => a == b,
+            (ZthfsError::Permission(a), ZthfsError::Permission(b)) => a == b,
+            (ZthfsError::Path(a), ZthfsError::Path(b)) => a == b,
+            (ZthfsError::Serialization(a), ZthfsError::Serialization(b)) => a == b,
+            (ZthfsError::Security(a), ZthfsError::Security(b)) => a == b,
+            // For Io errors, we compare the error messages since std::io::Error doesn't implement PartialEq
+            (ZthfsError::Io(a), ZthfsError::Io(b)) => a.to_string() == b.to_string(),
+            _ => false,
+        }
+    }
+}
+
 impl From<sled::Error> for ZthfsError {
     fn from(err: sled::Error) -> Self {
         ZthfsError::Fs(format!("Database error: {err}"))

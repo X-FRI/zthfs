@@ -78,6 +78,10 @@ impl Zthfs {
         &self.config
     }
 
+    pub fn data_dir(&self) -> &PathBuf {
+        &self.data_dir
+    }
+
     /// Restore inode mappings from persistent sled database to memory DashMap
     /// Uses the reverse mapping (inode -> path) for efficient restoration
     fn restore_inode_mappings(

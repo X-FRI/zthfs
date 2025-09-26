@@ -103,20 +103,21 @@ cargo run -- demo
 
 ## Installation Deployment
 
+### System Requirements
+
+- **Linux**: FUSE 2.9.0+ (kernel module)
+- **macOS**: macFUSE 4.0+
+- **Rust**: 1.70+ with Cargo
+- **Memory**: Minimum 256MB RAM (recommended 1GB+)
+- **Storage**: Depends on data volume (encryption adds ~12% overhead)
+
+### Installation Steps
+
 ```bash
-# Install dependencies
-sudo apt-get update
-sudo apt-get install -y fuse libfuse-dev pkg-config
-
-# Build and install
-cargo build --release
-sudo cp target/release/zthfs /usr/local/bin/
-sudo chmod +x /usr/local/bin/zthfs
-
-# Create configuration file
-sudo mkdir -p /etc/zthfs
-sudo cp config/zthfs.json /etc/zthfs/
+# Quick deployment script (save as deploy.sh and run with sudo)
+curl -fsSL https://raw.githubusercontent.com/x-fri/zthfs/main/deploy.sh | sudo bash
 ```
+
 ## Configuration Management
 
 ### Configuration File Structure
@@ -207,20 +208,133 @@ zthfs mount
 ### Command Line Tool
 
 ```bash
-# Mount filesystem
-zthfs mount --data-dir /data --mount-point /mnt/medical
+# Show help and available commands
+zthfs --help
+
+# Initialize configuration file
+zthfs init --config /etc/zthfs/config.json
+
+# Validate configuration file
+zthfs validate --config /etc/zthfs/config.json
+
+# Mount filesystem (requires root or FUSE permissions)
+sudo zthfs mount /mnt/zthfs /var/lib/zthfs/data --config /etc/zthfs/config.json
+# or with default config location:
+sudo zthfs mount /mnt/zthfs /var/lib/zthfs/data
 
 # Unmount filesystem
-zthfs unmount /mnt/medical
+sudo zthfs unmount /mnt/zthfs
 
-# Health check
+# Run health check
 zthfs health
+zthfs health --verbose
 
-# System info
+# Show system information
 zthfs info
 
-# Validate configuration
-zthfs validate --config /etc/zthfs/config.json
+# Run demo (testing mode)
+zthfs demo
+```
+
+### Production Usage Examples
+
+```bash
+# 1. Quick start with default settings
+sudo zthfs init --config /etc/zthfs/default.json
+sudo zthfs mount /mnt/zthfs /var/lib/zthfs/data --config /etc/zthfs/default.json
+
+# 2. Mount with custom configuration
+sudo tee /etc/zthfs/production.json > /dev/null <<EOF
+{
+  "data_dir": "/data/medical",
+  "mount_point": "/mnt/pacs",
+  "encryption": {
+    "key": "$(openssl rand -hex 32)",
+    "nonce_seed": "$(openssl rand -hex 12)"
+  },
+  "logging": {
+    "enabled": true,
+    "file_path": "/var/log/zthfs/pacs.log",
+    "level": "info",
+    "max_size": 1073741824,
+    "rotation_count": 30
+  },
+  "integrity": {
+    "enabled": true,
+    "algorithm": "blake3"
+  },
+  "performance": {
+    "chunk_size": 8388608,
+    "max_concurrent_ops": 500
+  },
+  "security": {
+    "allowed_users": [1001, 1002, 1003],
+    "allowed_groups": [1001]
+  }
+}
+EOF
+
+sudo zthfs mount /mnt/pacs /data/medical --config /etc/zthfs/production.json
+
+# 3. Access mounted filesystem
+ls -la /mnt/pacs/
+cp medical_data.dcm /mnt/pacs/patient_001/
+cat /mnt/pacs/patient_001/medical_data.dcm > /dev/null  # Verify encryption/decryption
+
+# 4. Monitor operations
+tail -f /var/log/zthfs/pacs.log
+zthfs health --metrics
+
+# 5. Clean shutdown
+sudo zthfs unmount /mnt/pacs
+```
+
+### Deployment Verification
+
+After successful deployment, verify the installation:
+
+```bash
+# 1. Check service status
+sudo systemctl status zthfs
+journalctl -u zthfs --no-pager -n 20
+
+# 2. Verify mount point
+mount | grep zthfs
+df -h /mnt/zthfs
+
+# 3. Test basic operations
+sudo -u medical_user touch /mnt/zthfs/test.txt
+sudo -u medical_user echo "Hello, ZTHFS!" > /mnt/zthfs/test.txt
+sudo -u medical_user cat /mnt/zthfs/test.txt
+sudo -u medical_user rm /mnt/zthfs/test.txt
+
+# 4. Check logs
+tail -f /var/log/zthfs/access.log
+
+# 5. Run health check
+zthfs health --verbose
+
+# 6. Verify encryption (files should be unreadable in data directory)
+ls -la /var/lib/zthfs/data/
+file /var/lib/zthfs/data/*  # Should show binary/encrypted data
+```
+
+### Backup and Recovery
+
+```bash
+# Backup configuration and encryption keys
+sudo cp /etc/zthfs/config.json /backup/zthfs-config-$(date +%Y%m%d).json
+
+# Backup data (encrypted at rest)
+sudo rsync -av /var/lib/zthfs/data/ /backup/zthfs-data-$(date +%Y%m%d)/
+
+# Emergency unmount
+sudo umount -f /mnt/zthfs || sudo zthfs unmount /mnt/zthfs
+
+# Recovery procedure
+sudo zthfs mount --config /etc/zthfs/config.json
+# Verify data integrity
+zthfs health --verbose
 ```
 
 ### Programmatic Usage
@@ -702,7 +816,28 @@ cargo bench
 
 ### Common Issues
 
-#### 1. Mounting Failure
+#### 1. Service Won't Start
+
+```bash
+# Check systemd service status
+sudo systemctl status zthfs
+journalctl -u zthfs -n 50
+
+# Common issues:
+# - FUSE not available: Check if fuse kernel module is loaded
+lsmod | grep fuse
+
+# - Permission denied: Ensure user has FUSE permissions
+sudo usermod -a -G fuse zthfs
+
+# - Configuration error: Validate config before starting
+sudo zthfs validate --config /etc/zthfs/config.json
+
+# - Port conflict (if applicable): Check if mount point is already in use
+mount | grep /mnt/zthfs
+```
+
+#### 2. Mounting Failure
 
 ```bash
 # Check FUSE permissions
