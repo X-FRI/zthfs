@@ -88,19 +88,31 @@ impl Zthfs {
 
     /// Check detailed file permissions including POSIX-style access control
     /// This provides more granular permission checking for different operations
+    ///
+    /// # Arguments
+    /// * `uid` - The user ID requesting access
+    /// * `gid` - The group ID of the requesting user
+    /// * `access` - The type of access being requested
+    /// * `file_attr` - Optional file attributes containing ownership and mode information
     pub fn check_file_access(
         &self,
         uid: u32,
         gid: u32,
         access: FileAccess,
-        file_mode: Option<u32>,
+        file_attr: Option<&fuser::FileAttr>,
     ) -> bool {
         // Use the security validator for detailed permission checking
-        if let Some(mode) = file_mode {
-            self.security_validator
-                .check_file_permission(uid, gid, mode, access)
+        if let Some(attr) = file_attr {
+            self.security_validator.check_file_permission(
+                uid,
+                gid,
+                attr.uid,
+                attr.gid,
+                attr.perm as u32,
+                access,
+            )
         } else {
-            // Fall back to basic permission check if no file mode available
+            // Fall back to basic permission check if no file attributes available
             self.check_permission(uid, gid)
         }
     }
@@ -269,8 +281,27 @@ impl Filesystem for Zthfs {
             }
         };
 
+        // Get file attributes for permission checking
+        let file_attr = match operations::FileSystemOperations::get_attr(self, &path) {
+            Ok(attr) => attr,
+            Err(_) => {
+                self.logger
+                    .log_error(
+                        "read",
+                        "get_attr_failed",
+                        uid,
+                        gid,
+                        "Failed to get file attributes",
+                        None,
+                    )
+                    .unwrap_or(());
+                reply.error(libc::EIO);
+                return;
+            }
+        };
+
         // Check read permissions
-        if !self.check_file_access(uid, gid, FileAccess::Read, None) {
+        if !self.check_file_access(uid, gid, FileAccess::Read, Some(&file_attr)) {
             self.log_access(
                 "read",
                 &path.to_string_lossy(),
@@ -337,8 +368,27 @@ impl Filesystem for Zthfs {
             }
         };
 
+        // Get file attributes for permission checking
+        let file_attr = match operations::FileSystemOperations::get_attr(self, &path) {
+            Ok(attr) => attr,
+            Err(_) => {
+                self.logger
+                    .log_error(
+                        "write",
+                        "get_attr_failed",
+                        uid,
+                        gid,
+                        "Failed to get file attributes",
+                        None,
+                    )
+                    .unwrap_or(());
+                reply.error(libc::EIO);
+                return;
+            }
+        };
+
         // Check write permissions
-        if !self.check_file_access(uid, gid, FileAccess::Write, None) {
+        if !self.check_file_access(uid, gid, FileAccess::Write, Some(&file_attr)) {
             self.log_access(
                 "write",
                 &path.to_string_lossy(),

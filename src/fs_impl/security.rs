@@ -204,32 +204,48 @@ impl SecurityValidator {
 
     /// Check POSIX-style file permissions
     /// Returns true if the user has the requested access to the file
+    ///
+    /// # Arguments
+    /// * `user_uid` - The user ID requesting access
+    /// * `user_gid` - The group ID of the requesting user
+    /// * `file_uid` - The user ID that owns the file
+    /// * `file_gid` - The group ID that owns the file
+    /// * `file_mode` - The file permission mode (e.g., 0o644)
+    /// * `requested_access` - The type of access being requested
     pub fn check_file_permission(
         &self,
-        uid: u32,
-        gid: u32,
+        user_uid: u32,
+        user_gid: u32,
+        file_uid: u32,
+        file_gid: u32,
         file_mode: u32,
         requested_access: FileAccess,
     ) -> bool {
         // First check if user is in allowed users/groups list (filesystem-level access control)
-        if !self.config.allowed_users.contains(&uid) && !self.config.allowed_groups.contains(&gid) {
+        if !self.config.allowed_users.contains(&user_uid)
+            && !self.config.allowed_groups.contains(&user_gid)
+        {
             return false;
         }
 
         // Extract permission bits from file mode
         let owner_perms = (file_mode >> 6) & 0o7;
-        let _group_perms = (file_mode >> 3) & 0o7;
-        let _other_perms = file_mode & 0o7;
+        let group_perms = (file_mode >> 3) & 0o7;
+        let other_perms = file_mode & 0o7;
 
-        // Determine which permission set to use
-        let effective_perms = if uid == 0 {
-            // Root has full access
+        // Determine which permission set to use based on POSIX ownership rules
+        let effective_perms = if user_uid == 0 {
+            // Root has full access regardless of file ownership
             0o7
+        } else if user_uid == file_uid {
+            // User owns the file - use owner permissions
+            owner_perms
+        } else if user_gid == file_gid {
+            // User is in the file's group - use group permissions
+            group_perms
         } else {
-            // Check ownership and apply appropriate permissions
-            // TODO: For simplicity, we'll assume the file owner/group matches the process owner/group
-            // In a real implementation, you'd get this from file metadata
-            owner_perms // Default to owner permissions for now
+            // User is neither owner nor in group - use other permissions
+            other_perms
         };
 
         // Check if requested access is allowed
@@ -289,9 +305,10 @@ mod tests {
         let validator = create_test_validator();
 
         // Test read access with different file modes
-        assert!(validator.check_file_permission(1000, 1000, 0o644, FileAccess::Read)); // rw-r--r--
-        assert!(validator.check_file_permission(1000, 1000, 0o600, FileAccess::Read)); // rw-------
-        assert!(!validator.check_file_permission(1000, 1000, 0o244, FileAccess::Read)); // -w-r--r--
+        // User 1000 owns the file (uid=1000, gid=1000)
+        assert!(validator.check_file_permission(1000, 1000, 1000, 1000, 0o644, FileAccess::Read)); // rw-r--r--
+        assert!(validator.check_file_permission(1000, 1000, 1000, 1000, 0o600, FileAccess::Read)); // rw-------
+        assert!(!validator.check_file_permission(1000, 1000, 1000, 1000, 0o244, FileAccess::Read)); // -w-r--r--
     }
 
     #[test]
@@ -299,9 +316,10 @@ mod tests {
         let validator = create_test_validator();
 
         // Test write access with different file modes
-        assert!(validator.check_file_permission(1000, 1000, 0o644, FileAccess::Write)); // rw-r--r--
-        assert!(validator.check_file_permission(1000, 1000, 0o622, FileAccess::Write)); // rw--w--w-
-        assert!(!validator.check_file_permission(1000, 1000, 0o444, FileAccess::Write)); // r--r--r--
+        // User 1000 owns the file (uid=1000, gid=1000)
+        assert!(validator.check_file_permission(1000, 1000, 1000, 1000, 0o644, FileAccess::Write)); // rw-r--r--
+        assert!(validator.check_file_permission(1000, 1000, 1000, 1000, 0o622, FileAccess::Write)); // rw--w--w-
+        assert!(!validator.check_file_permission(1000, 1000, 1000, 1000, 0o444, FileAccess::Write)); // r--r--r--
     }
 
     #[test]
@@ -309,18 +327,34 @@ mod tests {
         let validator = create_test_validator();
 
         // Test execute access with different file modes
-        assert!(validator.check_file_permission(1000, 1000, 0o755, FileAccess::Execute)); // rwxr-xr-x
-        assert!(!validator.check_file_permission(1000, 1000, 0o644, FileAccess::Execute)); // rw-r--r--
+        // User 1000 owns the file (uid=1000, gid=1000)
+        assert!(validator.check_file_permission(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o755,
+            FileAccess::Execute
+        )); // rwxr-xr-x
+        assert!(!validator.check_file_permission(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o644,
+            FileAccess::Execute
+        )); // rw-r--r--
     }
 
     #[test]
     fn test_root_access() {
         let validator = create_test_validator();
 
-        // Root (uid 0) should have full access regardless of file permissions
-        assert!(validator.check_file_permission(0, 0, 0o000, FileAccess::Read));
-        assert!(validator.check_file_permission(0, 0, 0o000, FileAccess::Write));
-        assert!(validator.check_file_permission(0, 0, 0o000, FileAccess::Execute));
+        // Root (uid 0) should have full access regardless of file ownership/permissions
+        // File owned by user 1000, group 1000, but root gets access anyway
+        assert!(validator.check_file_permission(0, 0, 1000, 1000, 0o000, FileAccess::Read));
+        assert!(validator.check_file_permission(0, 0, 1000, 1000, 0o000, FileAccess::Write));
+        assert!(validator.check_file_permission(0, 0, 1000, 1000, 0o000, FileAccess::Execute));
     }
 
     #[test]
@@ -328,8 +362,154 @@ mod tests {
         let validator = create_test_validator();
 
         // User 2000 is not in allowed_users or allowed_groups
-        assert!(!validator.check_file_permission(2000, 2000, 0o777, FileAccess::Read));
-        assert!(!validator.check_file_permission(2000, 2000, 0o777, FileAccess::Write));
+        // File owned by user 1000, group 1000 with full permissions
+        assert!(!validator.check_file_permission(2000, 2000, 1000, 1000, 0o777, FileAccess::Read));
+        assert!(!validator.check_file_permission(2000, 2000, 1000, 1000, 0o777, FileAccess::Write));
+    }
+
+    #[test]
+    fn test_posix_ownership_permissions() {
+        // Create a more permissive validator for testing POSIX permissions
+        let config = SecurityConfig {
+            allowed_users: vec![1000, 1001, 2000, 0], // Include all test users
+            allowed_groups: vec![1000, 2000, 0],      // Include all test groups
+            encryption_strength: "high".to_string(),
+            access_control_level: "strict".to_string(),
+        };
+        let validator = SecurityValidator::new(config);
+
+        // Test owner permissions (user 1000 owns file)
+        assert!(validator.check_file_permission(1000, 1000, 1000, 1000, 0o700, FileAccess::Read)); // rwx------
+        assert!(validator.check_file_permission(1000, 1000, 1000, 1000, 0o700, FileAccess::Write));
+        assert!(validator.check_file_permission(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o700,
+            FileAccess::Execute
+        ));
+
+        // Test group permissions (user 1001 in group 1000, file owned by 1000:1000)
+        assert!(validator.check_file_permission(1001, 1000, 1000, 1000, 0o070, FileAccess::Read)); // ---rwx---
+        assert!(validator.check_file_permission(1001, 1000, 1000, 1000, 0o070, FileAccess::Write));
+        assert!(validator.check_file_permission(
+            1001,
+            1000,
+            1000,
+            1000,
+            0o070,
+            FileAccess::Execute
+        ));
+
+        // Test other permissions (user 2000 not owner/group, file owned by 1000:1000)
+        assert!(validator.check_file_permission(2000, 2000, 1000, 1000, 0o007, FileAccess::Read)); // ------rwx
+        assert!(validator.check_file_permission(2000, 2000, 1000, 1000, 0o007, FileAccess::Write));
+        assert!(validator.check_file_permission(
+            2000,
+            2000,
+            1000,
+            1000,
+            0o007,
+            FileAccess::Execute
+        ));
+
+        // Test mixed permissions: owner can read/write, group can read, others can do nothing
+        assert!(validator.check_file_permission(1000, 1000, 1000, 1000, 0o640, FileAccess::Read)); // rw-r-----
+        assert!(validator.check_file_permission(1000, 1000, 1000, 1000, 0o640, FileAccess::Write));
+        assert!(!validator.check_file_permission(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o640,
+            FileAccess::Execute
+        ));
+
+        assert!(validator.check_file_permission(1001, 1000, 1000, 1000, 0o640, FileAccess::Read)); // Group can read
+        assert!(!validator.check_file_permission(1001, 1000, 1000, 1000, 0o640, FileAccess::Write)); // Group cannot write
+        assert!(!validator.check_file_permission(
+            1001,
+            1000,
+            1000,
+            1000,
+            0o640,
+            FileAccess::Execute
+        ));
+
+        assert!(!validator.check_file_permission(2000, 2000, 1000, 1000, 0o640, FileAccess::Read)); // Others cannot read
+        assert!(!validator.check_file_permission(2000, 2000, 1000, 1000, 0o640, FileAccess::Write));
+        assert!(!validator.check_file_permission(
+            2000,
+            2000,
+            1000,
+            1000,
+            0o640,
+            FileAccess::Execute
+        ));
+    }
+
+    #[test]
+    fn test_posix_permission_precedence() {
+        // Create a more permissive validator for testing POSIX permissions
+        let config = SecurityConfig {
+            allowed_users: vec![1000, 1001, 2000, 0], // Include all test users
+            allowed_groups: vec![1000, 2000, 0],      // Include all test groups
+            encryption_strength: "high".to_string(),
+            access_control_level: "strict".to_string(),
+        };
+        let validator = SecurityValidator::new(config);
+
+        // User is owner - should use owner permissions regardless of group membership
+        assert!(validator.check_file_permission(1000, 1000, 1000, 1000, 0o744, FileAccess::Read)); // rwxr--r--
+        assert!(validator.check_file_permission(1000, 1000, 1000, 1000, 0o744, FileAccess::Write));
+        assert!(validator.check_file_permission(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o744,
+            FileAccess::Execute
+        ));
+
+        // User is in group but not owner - should use group permissions (0o744 = rwxr--r--)
+        assert!(validator.check_file_permission(1001, 1000, 1000, 1000, 0o744, FileAccess::Read)); // Group can read
+        assert!(!validator.check_file_permission(1001, 1000, 1000, 1000, 0o744, FileAccess::Write)); // Group cannot write
+        assert!(!validator.check_file_permission(
+            1001,
+            1000,
+            1000,
+            1000,
+            0o744,
+            FileAccess::Execute
+        )); // Group cannot execute
+
+        // User is neither owner nor in group - should use other permissions (0o744 = rwxr--r--)
+        assert!(validator.check_file_permission(2000, 2000, 1000, 1000, 0o744, FileAccess::Read)); // Others can read
+        assert!(!validator.check_file_permission(2000, 2000, 1000, 1000, 0o744, FileAccess::Write)); // Others cannot write
+        assert!(!validator.check_file_permission(
+            2000,
+            2000,
+            1000,
+            1000,
+            0o744,
+            FileAccess::Execute
+        )); // Others cannot execute
+    }
+
+    #[test]
+    fn test_root_bypasses_ownership() {
+        let validator = create_test_validator();
+
+        // Root should always have access regardless of file ownership or permissions
+        assert!(validator.check_file_permission(0, 0, 1000, 1000, 0o000, FileAccess::Read)); // No permissions
+        assert!(validator.check_file_permission(0, 0, 1000, 1000, 0o000, FileAccess::Write));
+        assert!(validator.check_file_permission(0, 0, 1000, 1000, 0o000, FileAccess::Execute));
+
+        // Even with restrictive permissions, root gets access
+        assert!(validator.check_file_permission(0, 0, 2000, 2000, 0o000, FileAccess::Read));
+        assert!(validator.check_file_permission(0, 0, 2000, 2000, 0o000, FileAccess::Write));
+        assert!(validator.check_file_permission(0, 0, 2000, 2000, 0o000, FileAccess::Execute));
     }
 
     #[test]

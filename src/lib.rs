@@ -126,10 +126,19 @@ mod integration_tests {
         });
 
         // Test permission checks
-        assert!(validator.check_file_permission(1000, 1000, 0o644, FileAccess::Read));
-        assert!(validator.check_file_permission(1000, 1000, 0o644, FileAccess::Write));
-        assert!(!validator.check_file_permission(1000, 1000, 0o644, FileAccess::Execute)); // No execute permission
-        assert!(!validator.check_file_permission(2000, 2000, 0o777, FileAccess::Read)); // User not allowed
+        // User 1000 owns the file (uid=1000, gid=1000)
+        assert!(validator.check_file_permission(1000, 1000, 1000, 1000, 0o644, FileAccess::Read));
+        assert!(validator.check_file_permission(1000, 1000, 1000, 1000, 0o644, FileAccess::Write));
+        assert!(!validator.check_file_permission(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o644,
+            FileAccess::Execute
+        )); // No execute permission
+        // User 2000 is not in allowed list, file owned by user 1000, group 1000
+        assert!(!validator.check_file_permission(2000, 2000, 1000, 1000, 0o777, FileAccess::Read)); // User not allowed
     }
 
     #[test]
