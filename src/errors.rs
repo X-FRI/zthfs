@@ -67,4 +67,16 @@ impl From<Box<dyn std::error::Error + Send + Sync>> for ZthfsError {
     }
 }
 
+impl From<sled::Error> for ZthfsError {
+    fn from(err: sled::Error) -> Self {
+        ZthfsError::Fs(format!("Database error: {err}"))
+    }
+}
+
+impl From<std::string::FromUtf8Error> for ZthfsError {
+    fn from(err: std::string::FromUtf8Error) -> Self {
+        ZthfsError::Fs(format!("UTF-8 conversion error: {err}"))
+    }
+}
+
 pub type ZthfsResult<T> = Result<T, ZthfsError>;

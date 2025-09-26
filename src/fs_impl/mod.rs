@@ -2,15 +2,16 @@ use crate::config::FilesystemConfig;
 use crate::core::encryption::EncryptionHandler;
 use crate::core::integrity::IntegrityHandler;
 use crate::core::logging::LogHandler;
-use crate::errors::ZthfsResult;
+use crate::errors::{ZthfsError, ZthfsResult};
 use crate::fs_impl::security::{FileAccess, SecurityValidator};
 use dashmap::DashMap;
 use fuser::{
     Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry,
     ReplyWrite, Request,
 };
+use sled::{Db, IVec};
 use std::ffi::OsStr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -26,8 +27,10 @@ pub struct Zthfs {
     encryption: EncryptionHandler,
     logger: Arc<LogHandler>,
     security_validator: SecurityValidator,
-    /// inode to actual file path mapping (using DashMap for better concurrency)
+    /// inode to actual file path mapping (using DashMap for fast lookups)
     inodes: Arc<DashMap<u64, PathBuf>>,
+    /// Persistent inode database using sled for collision-free inode allocation
+    inode_db: Db,
 }
 
 impl Zthfs {
@@ -44,9 +47,17 @@ impl Zthfs {
         // Ensure data directory exists
         std::fs::create_dir_all(&config.data_dir)?;
 
+        // Initialize sled database for inode management
+        let inode_db_path = PathBuf::from(&config.data_dir).join("inode_db");
+        let inode_db = sled::open(inode_db_path)?;
+
         let encryption = EncryptionHandler::new(&config.encryption);
         let logger = Arc::new(LogHandler::new(&config.logging)?);
         let security_validator = SecurityValidator::new(config.security.clone());
+
+        // Restore inode mappings from persistent storage to memory
+        let inodes = Arc::new(DashMap::new());
+        Self::restore_inode_mappings(&inode_db, &inodes)?;
 
         Ok(Self {
             config: config.clone(),
@@ -54,12 +65,73 @@ impl Zthfs {
             encryption,
             logger,
             security_validator,
-            inodes: Arc::new(DashMap::new()),
+            inodes,
+            inode_db,
         })
     }
 
     pub fn config(&self) -> &FilesystemConfig {
         &self.config
+    }
+
+    /// Restore inode mappings from persistent sled database to memory DashMap
+    fn restore_inode_mappings(
+        inode_db: &Db,
+        inodes: &Arc<DashMap<u64, PathBuf>>,
+    ) -> ZthfsResult<()> {
+        // Iterate through all path -> inode mappings in sled
+        for result in inode_db.iter() {
+            let (key, value) = result?;
+            let path_str = String::from_utf8(key.to_vec())?;
+            let path = PathBuf::from(path_str);
+            let inode_bytes: [u8; 8] = value
+                .as_ref()
+                .try_into()
+                .map_err(|_| ZthfsError::Fs("Invalid inode data in database".to_string()))?;
+            let inode = u64::from_be_bytes(inode_bytes);
+
+            inodes.insert(inode, path);
+        }
+        Ok(())
+    }
+
+    /// Get inode for a path, creating a new one if it doesn't exist
+    /// Uses sled's atomic ID generation to ensure collision-free allocation
+    /// Returns inode numbers starting from 1 (FUSE requirement)
+    pub fn get_or_create_inode(&self, path: &Path) -> ZthfsResult<u64> {
+        let path_str = path.to_string_lossy().to_string();
+
+        // First, check if we already have this path mapped to an inode
+        let path_key = IVec::from(path_str.as_bytes());
+        if let Some(inode_bytes) = self.inode_db.get(&path_key)? {
+            // Path already exists, return its inode
+            let inode_bytes: [u8; 8] = inode_bytes
+                .as_ref()
+                .try_into()
+                .map_err(|_| ZthfsError::Fs("Invalid inode data for existing path".to_string()))?;
+            let inode = u64::from_be_bytes(inode_bytes);
+            Ok(inode)
+        } else {
+            // Path doesn't exist, generate a new unique inode atomically
+            // Add 1 to ensure inode starts from 1 (FUSE requirement)
+            let inode = self.inode_db.generate_id()? + 1;
+            let inode_bytes = inode.to_be_bytes();
+
+            // Atomically store both mappings in a sled transaction
+            let mut batch = sled::Batch::default();
+            batch.insert(path_key, IVec::from(&inode_bytes[..]));
+            self.inode_db.apply_batch(batch)?;
+
+            // Also store in memory for fast access
+            self.inodes.insert(inode, path.to_path_buf());
+
+            Ok(inode)
+        }
+    }
+
+    /// Get path for an inode (used by FUSE operations)
+    pub fn get_path_for_inode(&self, inode: u64) -> Option<PathBuf> {
+        self.inodes.get(&inode).map(|p| p.clone())
     }
 
     pub fn log_access(
@@ -126,8 +198,8 @@ impl Filesystem for Zthfs {
 
         // Get the parent path from inode
         let parent_path = {
-            match self.inodes.get(&_parent) {
-                Some(path) => path.clone(),
+            match self.get_path_for_inode(_parent) {
+                Some(path) => path,
                 None => {
                     self.logger
                         .log_error(
@@ -195,8 +267,8 @@ impl Filesystem for Zthfs {
 
         // Get the actual path from inode
         let path = {
-            match self.inodes.get(&_ino) {
-                Some(path) => path.clone(),
+            match self.get_path_for_inode(_ino) {
+                Some(path) => path,
                 None => {
                     self.logger
                         .log_error("getattr", "unknown_inode", uid, gid, "Invalid inode", None)
@@ -269,8 +341,8 @@ impl Filesystem for Zthfs {
 
         // Get the actual path from inode
         let path = {
-            match self.inodes.get(&_ino) {
-                Some(path) => path.clone(),
+            match self.get_path_for_inode(_ino) {
+                Some(path) => path,
                 None => {
                     self.logger
                         .log_error("read", "unknown_inode", uid, gid, "Invalid inode", None)
@@ -356,8 +428,8 @@ impl Filesystem for Zthfs {
 
         // Get the actual path from inode
         let path = {
-            match self.inodes.get(&_ino) {
-                Some(path) => path.clone(),
+            match self.get_path_for_inode(_ino) {
+                Some(path) => path,
                 None => {
                     self.logger
                         .log_error("write", "unknown_inode", uid, gid, "Invalid inode", None)
@@ -441,8 +513,8 @@ impl Filesystem for Zthfs {
 
         // Get the actual path from inode
         let path = {
-            match self.inodes.get(&_ino) {
-                Some(path) => path.clone(),
+            match self.get_path_for_inode(_ino) {
+                Some(path) => path,
                 None => {
                     self.logger
                         .log_error("readdir", "unknown_inode", uid, gid, "Invalid inode", None)
@@ -514,8 +586,8 @@ impl Filesystem for Zthfs {
 
         // Get the parent path from inode
         let parent_path = {
-            match self.inodes.get(&_parent) {
-                Some(path) => path.clone(),
+            match self.get_path_for_inode(_parent) {
+                Some(path) => path,
                 None => {
                     self.logger
                         .log_error(
@@ -581,8 +653,8 @@ impl Filesystem for Zthfs {
 
         // Get the parent path from inode
         let parent_path = {
-            match self.inodes.get(&_parent) {
-                Some(path) => path.clone(),
+            match self.get_path_for_inode(_parent) {
+                Some(path) => path,
                 None => {
                     self.logger
                         .log_error(

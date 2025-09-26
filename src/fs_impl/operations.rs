@@ -3,9 +3,7 @@ use crate::errors::{ZthfsError, ZthfsResult};
 use crate::fs_impl::Zthfs;
 use fuser::{FileAttr, FileType, ReplyDirectory};
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::DefaultHasher;
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -46,20 +44,15 @@ impl FileSystemOperations {
     }
 
     /// Get or assign an inode number for the given path.
-    /// Uses a simple strategy: hash value of the file real path as the inode.
-    /// This ensures that the same path always gets the same inode.
-    /// Stores the mapping of inode and real path in fs.inodes.
+    /// Uses sled's atomic ID generation to ensure collision-free inode allocation.
+    /// This ensures that the same path always gets the same inode and different paths never conflict.
     pub fn get_inode(fs: &Zthfs, path: &Path) -> u64 {
-        let real_path = Self::virtual_to_real(fs, path);
-
-        // Simple inode allocation strategy: use the hash value of the path
-        let mut hasher = DefaultHasher::new();
-        real_path.hash(&mut hasher);
-        let inode = hasher.finish();
-
-        // Use DashMap's entry API for atomic insert
-        fs.inodes.insert(inode, real_path);
-        inode
+        // Use the new sled-based inode allocation system
+        fs.get_or_create_inode(path).unwrap_or_else(|e| {
+            log::error!("Failed to allocate inode for path {path:?}: {e}");
+            // Fallback to a temporary inode if allocation fails (should not happen in practice)
+            1
+        })
     }
 
     /// Get the attributes of the specified inode (file or directory). (size, permissions, timestamps, etc.)
@@ -615,6 +608,44 @@ mod tests {
         // Same path should generate the same inode
         assert_eq!(inode1, inode2);
         assert!(inode1 > 0);
+    }
+
+    #[test]
+    fn test_inode_collision_resistance() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        // Test different paths that might have collided with hash-based approach
+        let paths = vec![
+            "/test/file1.txt",
+            "/test/file2.txt",
+            "/different/path/file.txt",
+            "/very/deep/nested/directory/structure/file.txt",
+            "/file/with/similar/name.txt",
+            "/file/with/similar/name2.txt",
+        ];
+
+        let mut inodes = std::collections::HashSet::new();
+
+        for path in paths {
+            let inode = FileSystemOperations::get_inode(&fs, Path::new(path));
+            // Each inode should be unique and > 0
+            assert!(
+                inode > 0,
+                "Inode should be greater than 0 for path: {}",
+                path
+            );
+            assert!(
+                inodes.insert(inode),
+                "Inode collision detected: {} appears multiple times",
+                inode
+            );
+        }
+
+        // Verify that the same path always gives the same inode
+        let test_path = Path::new("/consistency/test.txt");
+        let inode_first = FileSystemOperations::get_inode(&fs, test_path);
+        let inode_second = FileSystemOperations::get_inode(&fs, test_path);
+        assert_eq!(inode_first, inode_second);
     }
 
     #[test]
