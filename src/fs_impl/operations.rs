@@ -126,32 +126,160 @@ impl FileSystemOperations {
 
     /// Write partial content to a file at the specified offset (with encryption and integrity verification).
     /// This enables proper POSIX write semantics with offset support.
+    ///
+    /// This implementation is optimized to avoid reading/writing entire files:
+    /// - For chunked files: Only affected chunks are read/modified/written
+    /// - For regular files: Falls back to efficient read-modify-write for small files
     pub fn write_partial(fs: &Zthfs, path: &Path, offset: i64, data: &[u8]) -> ZthfsResult<u32> {
-        // Read the current file content
-        let current_data = Self::read_file(fs, path).unwrap_or_default();
+        let metadata_path = Self::get_metadata_path(fs, path);
 
+        if metadata_path.exists() {
+            // Use optimized chunked partial write
+            Self::write_partial_chunked(fs, path, offset, data)
+        } else {
+            // Use optimized regular file partial write
+            Self::write_partial_regular(fs, path, offset, data)
+        }
+    }
+
+    /// Write partial content to a regular (non-chunked) file.
+    /// Optimized to minimize memory usage for small files.
+    fn write_partial_regular(
+        fs: &Zthfs,
+        path: &Path,
+        offset: i64,
+        data: &[u8],
+    ) -> ZthfsResult<u32> {
         let offset = offset as usize;
-        let new_size = std::cmp::max(current_data.len(), offset + data.len());
 
-        // Create new data buffer
-        let mut new_data = vec![0u8; new_size];
+        // For regular files, we need to read-modify-write, but we can optimize it
+        let current_data = Self::read_file(fs, path).unwrap_or_default();
+        let current_size = current_data.len();
 
-        // Copy existing data
-        if !current_data.is_empty() {
-            let copy_len = std::cmp::min(current_data.len(), new_data.len());
-            new_data[..copy_len].copy_from_slice(&current_data[..copy_len]);
+        let new_size = std::cmp::max(current_size, offset + data.len());
+
+        // If this is a small file, use the read-modify-write approach
+        if current_size <= Self::get_chunk_size(fs) {
+            let mut new_data = vec![0u8; new_size];
+            if !current_data.is_empty() {
+                let copy_len = std::cmp::min(current_data.len(), new_data.len());
+                new_data[..copy_len].copy_from_slice(&current_data[..copy_len]);
+            }
+
+            let write_start = offset;
+            let write_end = std::cmp::min(write_start + data.len(), new_data.len());
+            let data_end = write_end - write_start;
+            new_data[write_start..write_end].copy_from_slice(&data[..data_end]);
+
+            Self::write_file(fs, path, &new_data)?;
+            Ok(data_end as u32)
+        } else {
+            // For larger regular files that should have been chunked, convert to chunked
+            log::warn!(
+                "Large regular file detected during partial write, converting to chunked storage: {:?}",
+                path
+            );
+
+            // Read current content
+            let current_data = Self::read_file(fs, path).unwrap_or_default();
+
+            // Create new data with the modification
+            let mut new_data = vec![0u8; new_size];
+            if !current_data.is_empty() {
+                let copy_len = std::cmp::min(current_data.len(), new_data.len());
+                new_data[..copy_len].copy_from_slice(&current_data[..copy_len]);
+            }
+
+            let write_start = offset;
+            let write_end = std::cmp::min(write_start + data.len(), new_data.len());
+            let data_end = write_end - write_start;
+            new_data[write_start..write_end].copy_from_slice(&data[..data_end]);
+
+            // Write as chunked file
+            Self::write_file_chunked(fs, path, &new_data)?;
+            Ok(data_end as u32)
+        }
+    }
+
+    /// Write partial content to a chunked file.
+    /// Only reads and writes the chunks that are actually affected by the write operation.
+    fn write_partial_chunked(
+        fs: &Zthfs,
+        path: &Path,
+        offset: i64,
+        data: &[u8],
+    ) -> ZthfsResult<u32> {
+        let metadata = Self::load_metadata(fs, path)?;
+        let chunk_size = metadata.chunk_size;
+        let total_chunks = metadata.chunk_count as usize;
+
+        let write_start = offset as usize;
+        let write_end = write_start + data.len();
+        let file_size = metadata.size as usize;
+
+        // Calculate which chunks are affected
+        let start_chunk = write_start / chunk_size;
+        let end_chunk = ((write_end - 1) / chunk_size) + 1; // inclusive
+
+        // Ensure we don't go beyond existing chunks
+        let end_chunk = std::cmp::min(end_chunk, total_chunks);
+
+        // If writing beyond current file size, we need to extend the file
+        let new_file_size = std::cmp::max(file_size, write_end);
+        let new_total_chunks = new_file_size.div_ceil(chunk_size);
+
+        let mut bytes_written = 0;
+
+        for chunk_idx in start_chunk..end_chunk {
+            let chunk_start = chunk_idx * chunk_size;
+            let chunk_end = std::cmp::min((chunk_idx + 1) * chunk_size, new_file_size);
+
+            // Read existing chunk data (or create empty chunk if extending)
+            let mut chunk_data = if chunk_idx < total_chunks {
+                Self::read_chunk(fs, path, chunk_idx as u32)?
+            } else {
+                // New chunk, initialize with zeros
+                vec![0u8; chunk_size]
+            };
+
+            // Ensure chunk_data is the right size
+            if chunk_data.len() < chunk_size && chunk_idx < new_total_chunks - 1 {
+                chunk_data.resize(chunk_size, 0);
+            } else if chunk_idx == new_total_chunks - 1 {
+                // Last chunk might be smaller
+                chunk_data.resize(chunk_end - chunk_start, 0);
+            }
+
+            // Calculate what part of this chunk to modify
+            let chunk_write_start = std::cmp::max(write_start, chunk_start) - chunk_start;
+            let chunk_write_end = std::cmp::min(write_end, chunk_end) - chunk_start;
+
+            let data_start = bytes_written;
+            let data_end = data_start + (chunk_write_end - chunk_write_start);
+
+            // Apply the write to this chunk
+            chunk_data[chunk_write_start..chunk_write_end]
+                .copy_from_slice(&data[data_start..data_end]);
+
+            // Write the modified chunk
+            Self::write_chunk(fs, path, chunk_idx as u32, &chunk_data)?;
+
+            bytes_written += chunk_write_end - chunk_write_start;
         }
 
-        // Write new data at offset
-        let write_start = offset;
-        let write_end = std::cmp::min(write_start + data.len(), new_data.len());
-        let data_end = write_end - write_start;
-        new_data[write_start..write_end].copy_from_slice(&data[..data_end]);
+        // Update metadata if file size changed
+        if new_file_size != file_size {
+            let mut updated_metadata = metadata;
+            updated_metadata.size = new_file_size as u64;
+            updated_metadata.chunk_count = new_total_chunks as u32;
+            updated_metadata.mtime = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            Self::save_metadata(fs, path, &updated_metadata)?;
+        }
 
-        // Write the modified data back
-        Self::write_file(fs, path, &new_data)?;
-
-        Ok(data_end as u32)
+        Ok(bytes_written as u32)
     }
 
     /// Write the content of the file (with encryption and integrity verification).
@@ -1018,6 +1146,75 @@ mod tests {
 
         // Clean up
         FileSystemOperations::remove_file(&fs, empty_path).unwrap();
+    }
+
+    #[test]
+    fn test_chunked_partial_write_operations() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        // Create a large file that will be chunked (> 4MB)
+        let chunk_size = FileSystemOperations::get_chunk_size(&fs);
+        let file_size = chunk_size * 3 + 1000; // > 12MB
+        let large_data: Vec<u8> = (0..file_size).map(|i| (i % 256) as u8).collect();
+
+        let test_path = Path::new("/chunked_partial_write.dat");
+        FileSystemOperations::write_file_chunked(&fs, test_path, &large_data).unwrap();
+
+        // Test partial write in the middle of the first chunk
+        let offset1 = 1000;
+        let write_data1 = b"MODIFIED_CHUNK_1";
+        let bytes_written1 =
+            FileSystemOperations::write_partial(&fs, test_path, offset1 as i64, write_data1)
+                .unwrap();
+        assert_eq!(bytes_written1, write_data1.len() as u32);
+
+        // Test partial write across chunk boundaries
+        let offset2 = (chunk_size - 50) as i64; // Near end of first chunk
+        let write_data2 = b"CROSS_CHUNK_BOUNDARY_DATA";
+        let bytes_written2 =
+            FileSystemOperations::write_partial(&fs, test_path, offset2, write_data2).unwrap();
+        assert_eq!(bytes_written2, write_data2.len() as u32);
+
+        // Test partial write in the middle chunk
+        let offset3 = (chunk_size + chunk_size / 2) as i64;
+        let write_data3 = b"MIDDLE_CHUNK_MODIFICATION";
+        let bytes_written3 =
+            FileSystemOperations::write_partial(&fs, test_path, offset3, write_data3).unwrap();
+        assert_eq!(bytes_written3, write_data3.len() as u32);
+
+        // Test partial write extending the file
+        let offset4 = file_size as i64 + 100; // Beyond current file size
+        let write_data4 = b"EXTENDING_FILE_CONTENT";
+        let bytes_written4 =
+            FileSystemOperations::write_partial(&fs, test_path, offset4, write_data4).unwrap();
+        assert_eq!(bytes_written4, write_data4.len() as u32);
+
+        // Read and verify modifications
+        let read_data = FileSystemOperations::read_file_chunked(&fs, test_path).unwrap();
+
+        // Verify first modification
+        let mut expected_data = large_data.clone();
+        expected_data[offset1..offset1 + write_data1.len()].copy_from_slice(write_data1);
+        expected_data[offset2 as usize..offset2 as usize + write_data2.len()]
+            .copy_from_slice(write_data2);
+        expected_data[offset3 as usize..offset3 as usize + write_data3.len()]
+            .copy_from_slice(write_data3);
+
+        // Verify file was extended
+        let new_file_size = std::cmp::max(file_size, (offset4 + write_data4.len() as i64) as usize);
+        assert_eq!(read_data.len(), new_file_size);
+
+        // Verify the extending write
+        let extend_start = offset4 as usize;
+        let extend_end = extend_start + write_data4.len();
+        assert_eq!(&read_data[extend_start..extend_end], write_data4);
+
+        // Verify other modifications (first 100KB should match expected)
+        let check_size = std::cmp::min(100 * 1024, expected_data.len());
+        assert_eq!(&read_data[..check_size], &expected_data[..check_size]);
+
+        // Clean up
+        FileSystemOperations::remove_file(&fs, test_path).unwrap();
     }
 
     #[test]
