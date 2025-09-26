@@ -101,21 +101,14 @@ cargo run -- demo
 ./target/release/zthfs demo
 ```
 
-## Installation Deployment
-
-### System Requirements
-
-- **Linux**: FUSE 2.9.0+ (kernel module)
-- **macOS**: macFUSE 4.0+
-- **Rust**: 1.70+ with Cargo
-- **Memory**: Minimum 256MB RAM (recommended 1GB+)
-- **Storage**: Depends on data volume (encryption adds ~12% overhead)
-
-### Installation Steps
+## Installation
 
 ```bash
-# Quick deployment script (save as deploy.sh and run with sudo)
+# install script
 curl -fsSL https://raw.githubusercontent.com/x-fri/zthfs/main/deploy.sh | sudo bash
+
+# To uninstall ZTHFS:
+curl -fsSL https://raw.githubusercontent.com/x-fri/zthfs/main/uninstall.sh | sudo bash
 ```
 
 ## Configuration Management

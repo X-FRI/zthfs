@@ -145,7 +145,7 @@ fn mount_filesystem(
     }
 
     // Create filesystem instance
-    let mut fs = Zthfs::new(&config)?;
+    let fs = Zthfs::new(&config)?;
 
     // Mount with FUSE - this will block until the filesystem is unmounted
     info!("Starting FUSE mount at {mount_point}");
@@ -179,12 +179,12 @@ fn unmount_filesystem(mount_point: &str) -> Result<(), Box<dyn std::error::Error
     {
         use std::process::Command;
         match Command::new("fusermount")
-            .args(&["-u", mount_point])
+            .args(["-u", mount_point])
             .status()
         {
             Ok(status) if status.success() => {
                 info!("Filesystem unmounted successfully from {mount_point} using fusermount");
-                return Ok(());
+                Ok(())
             }
             Ok(_) => {
                 // fusermount failed, try umount
