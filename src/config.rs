@@ -100,7 +100,7 @@ impl Default for IntegrityConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            algorithm: "crc32c".to_string(),
+            algorithm: "blake3".to_string(), // Use cryptographically secure BLAKE3 by default
             xattr_namespace: "user.zthfs".to_string(),
         }
     }

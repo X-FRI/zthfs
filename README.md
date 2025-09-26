@@ -54,7 +54,7 @@ graph TD
 src/
 ├── core/                 # Core functionality modules
 │   ├── encryption.rs    # AES-256-GCM encryption with BLAKE3 nonce generation
-│   ├── integrity.rs     # CRC32c integrity verification and validation
+│   ├── integrity.rs     # Cryptographic integrity verification (BLAKE3/CRC32c)
 │   └── logging.rs       # Asynchronous logging with channel-based architecture
 ├── config/              # Configuration management and validation
 │   └── mod.rs           # Encryption, logging, integrity, and security configs

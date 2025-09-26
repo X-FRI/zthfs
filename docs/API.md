@@ -63,13 +63,17 @@ assert_eq!(data.to_vec(), decrypted);
 use zthfs::core::integrity::IntegrityHandler;
 use zthfs::config::IntegrityConfig;
 
-// Compute checksum
+// Compute cryptographically secure checksum (BLAKE3 recommended for security)
 let data = b"medical data";
-let checksum = IntegrityHandler::compute_checksum(data);
+let checksum = IntegrityHandler::compute_checksum(data, "blake3");
 
-// Verify integrity
-let is_valid = IntegrityHandler::verify_integrity(data, checksum);
+// Verify integrity with specified algorithm
+let is_valid = IntegrityHandler::verify_integrity(data, &checksum, "blake3");
 assert!(is_valid);
+
+// Legacy CRC32c support (not recommended for production)
+let crc_checksum = IntegrityHandler::compute_checksum(data, "crc32c");
+let crc_valid = IntegrityHandler::verify_integrity(data, &crc_checksum, "crc32c");
 
 // Store checksum using extended attributes
 let path = std::path::Path::new("/file.txt");

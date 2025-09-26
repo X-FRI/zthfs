@@ -1,27 +1,54 @@
 use crate::config::IntegrityConfig;
 use crate::errors::{ZthfsError, ZthfsResult};
+use blake3;
 use crc32c::crc32c;
 use std::path::Path;
 
 pub struct IntegrityHandler;
 
 impl IntegrityHandler {
-    pub fn compute_checksum(data: &[u8]) -> u32 {
+    /// Compute CRC32c checksum (legacy method for backward compatibility)
+    pub fn compute_crc32c_checksum(data: &[u8]) -> u32 {
         crc32c(data)
     }
 
-    /// Verify the integrity of the data
-    pub fn verify_integrity(data: &[u8], expected_checksum: u32) -> bool {
-        Self::compute_checksum(data) == expected_checksum
+    /// Compute cryptographically secure checksum using BLAKE3
+    pub fn compute_blake3_checksum(data: &[u8]) -> Vec<u8> {
+        let hash = blake3::hash(data);
+        hash.as_bytes().to_vec()
+    }
+
+    /// Compute checksum based on algorithm (returns Vec<u8> for variable length)
+    pub fn compute_checksum(data: &[u8], algorithm: &str) -> Vec<u8> {
+        match algorithm.to_lowercase().as_str() {
+            "crc32c" => Self::compute_crc32c_checksum(data).to_le_bytes().to_vec(),
+            "blake3" => Self::compute_blake3_checksum(data),
+            _ => panic!("Unsupported algorithm: {algorithm}"),
+        }
+    }
+
+    /// Legacy method for CRC32c (maintains backward compatibility)
+    pub fn compute_checksum_legacy(data: &[u8]) -> u32 {
+        Self::compute_crc32c_checksum(data)
+    }
+
+    /// Verify the integrity of the data using the specified algorithm
+    pub fn verify_integrity(data: &[u8], expected_checksum: &[u8], algorithm: &str) -> bool {
+        let computed = Self::compute_checksum(data, algorithm);
+        computed == expected_checksum
+    }
+
+    /// Legacy verification method for CRC32c
+    pub fn verify_integrity_legacy(data: &[u8], expected_checksum: u32) -> bool {
+        Self::compute_crc32c_checksum(data) == expected_checksum
     }
 
     /// Read the checksum from the extended attribute.
-    /// Use xattr library to access the extended attributes of the file system.
-    /// The checksum is stored in the extended attribute in little-endian u32 format, prefixed with config.xattr_namespace.
+    /// Returns the checksum as bytes, with length depending on the algorithm.
     pub fn get_checksum_from_xattr(
         real_path: &Path,
         config: &IntegrityConfig,
-    ) -> ZthfsResult<Option<u32>> {
+    ) -> ZthfsResult<Option<Vec<u8>>> {
         if !config.enabled {
             return Ok(None);
         }
@@ -29,10 +56,17 @@ impl IntegrityHandler {
         let xattr_name = format!("{}.checksum", config.xattr_namespace);
         match xattr::get(real_path, &xattr_name) {
             Ok(Some(value)) => {
-                if value.len() == 4 {
-                    let checksum = u32::from_le_bytes(value.try_into().unwrap());
-                    Ok(Some(checksum))
+                // Validate checksum length based on algorithm
+                let expected_len = Self::get_checksum_length(&config.algorithm);
+                if value.len() == expected_len {
+                    Ok(Some(value))
                 } else {
+                    log::warn!(
+                        "Checksum length mismatch for algorithm {}: expected {}, got {}",
+                        config.algorithm,
+                        expected_len,
+                        value.len()
+                    );
                     Ok(None)
                 }
             }
@@ -48,7 +82,7 @@ impl IntegrityHandler {
     /// Write the computed checksum to the extended attribute of the file.
     pub fn set_checksum_xattr(
         real_path: &Path,
-        checksum: u32,
+        checksum: &[u8],
         config: &IntegrityConfig,
     ) -> ZthfsResult<()> {
         if !config.enabled {
@@ -56,12 +90,31 @@ impl IntegrityHandler {
         }
 
         let xattr_name = format!("{}.checksum", config.xattr_namespace);
-        let checksum_bytes = checksum.to_le_bytes();
 
-        xattr::set(real_path, &xattr_name, &checksum_bytes)
+        // Validate checksum length before storing
+        let expected_len = Self::get_checksum_length(&config.algorithm);
+        if checksum.len() != expected_len {
+            return Err(ZthfsError::Integrity(format!(
+                "Checksum length mismatch for algorithm {}: expected {}, got {}",
+                config.algorithm,
+                expected_len,
+                checksum.len()
+            )));
+        }
+
+        xattr::set(real_path, &xattr_name, checksum)
             .map_err(|e| ZthfsError::Integrity(format!("Failed to set checksum xattr: {e}")))?;
 
         Ok(())
+    }
+
+    /// Get the expected checksum length for a given algorithm
+    fn get_checksum_length(algorithm: &str) -> usize {
+        match algorithm.to_lowercase().as_str() {
+            "crc32c" => 4,  // u32
+            "blake3" => 32, // BLAKE3 hash length
+            _ => 0,         // Unknown algorithm
+        }
     }
 
     /// Remove the checksum extended attribute.
@@ -101,9 +154,9 @@ impl IntegrityHandler {
     }
 
     /// Supported checksum algorithms.
-    /// Only algorithms that are actually implemented are listed here.
+    /// Includes both legacy and cryptographically secure algorithms.
     pub fn supported_algorithms() -> Vec<&'static str> {
-        vec!["crc32c"] // Currently only CRC32c is implemented
+        vec!["crc32c", "blake3"] // CRC32c (legacy) and BLAKE3 (cryptographically secure)
     }
 
     /// Check if the algorithm is supported.
@@ -121,19 +174,48 @@ mod tests {
     #[test]
     fn test_checksum_computation() {
         let data = b"Hello, world!";
-        let checksum = IntegrityHandler::compute_checksum(data);
-        assert_ne!(checksum, 0);
+
+        // Test CRC32c
+        let crc32c_checksum = IntegrityHandler::compute_checksum(data, "crc32c");
+        assert_eq!(crc32c_checksum.len(), 4);
+
+        // Test BLAKE3
+        let blake3_checksum = IntegrityHandler::compute_checksum(data, "blake3");
+        assert_eq!(blake3_checksum.len(), 32);
+
+        // Both should be non-zero
+        assert!(!crc32c_checksum.iter().all(|&x| x == 0));
+        assert!(!blake3_checksum.iter().all(|&x| x == 0));
     }
 
     #[test]
     fn test_integrity_verification() {
         let data = b"Hello, world!";
-        let checksum = IntegrityHandler::compute_checksum(data);
 
-        assert!(IntegrityHandler::verify_integrity(data, checksum));
+        // Test CRC32c verification
+        let crc32c_checksum = IntegrityHandler::compute_checksum(data, "crc32c");
+        assert!(IntegrityHandler::verify_integrity(
+            data,
+            &crc32c_checksum,
+            "crc32c"
+        ));
         assert!(!IntegrityHandler::verify_integrity(
             b"Hello, world",
-            checksum
+            &crc32c_checksum,
+            "crc32c"
+        ));
+
+        // Test BLAKE3 verification
+        let blake3_checksum = IntegrityHandler::compute_checksum(data, "blake3");
+        assert!(IntegrityHandler::verify_integrity(
+            data,
+            &blake3_checksum,
+            "blake3"
+        ));
+        assert!(!IntegrityHandler::verify_integrity(
+            b"Hello, world",
+            &blake3_checksum,
+            "blake3"
         ));
     }
 
@@ -173,8 +255,9 @@ mod tests {
     fn test_supported_algorithms() {
         let algorithms = IntegrityHandler::supported_algorithms();
         assert!(algorithms.contains(&"crc32c"));
+        assert!(algorithms.contains(&"blake3"));
         assert!(!algorithms.is_empty());
-        assert_eq!(algorithms.len(), 1); // Currently only crc32c is implemented
+        assert_eq!(algorithms.len(), 2); // CRC32c and BLAKE3 are supported
     }
 
     #[test]
@@ -206,5 +289,136 @@ mod tests {
             xattr_namespace: "".to_string(),
         };
         assert!(IntegrityHandler::validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_cryptographic_vs_non_cryptographic() {
+        let data = b"Sensitive medical data that must be protected";
+
+        // Both algorithms should work for basic integrity
+        let crc32c_checksum = IntegrityHandler::compute_checksum(data, "crc32c");
+        let blake3_checksum = IntegrityHandler::compute_checksum(data, "blake3");
+
+        assert!(IntegrityHandler::verify_integrity(
+            data,
+            &crc32c_checksum,
+            "crc32c"
+        ));
+        assert!(IntegrityHandler::verify_integrity(
+            data,
+            &blake3_checksum,
+            "blake3"
+        ));
+
+        // But they have different properties
+        assert_eq!(crc32c_checksum.len(), 4); // CRC32c is only 4 bytes
+        assert_eq!(blake3_checksum.len(), 32); // BLAKE3 is 32 bytes
+
+        // CRC32c can be vulnerable to certain attacks
+        // BLAKE3 is cryptographically secure and collision-resistant
+    }
+
+    #[test]
+    fn test_blake3_collision_resistance() {
+        // BLAKE3 has strong collision resistance properties
+        let data1 = b"Medical record A: Patient has condition X";
+        let data2 = b"Medical record B: Patient has condition Y";
+
+        let checksum1 = IntegrityHandler::compute_checksum(data1, "blake3");
+        let checksum2 = IntegrityHandler::compute_checksum(data2, "blake3");
+
+        // Different inputs should produce different hashes
+        assert_ne!(checksum1, checksum2);
+
+        // Verify integrity
+        assert!(IntegrityHandler::verify_integrity(
+            data1, &checksum1, "blake3"
+        ));
+        assert!(IntegrityHandler::verify_integrity(
+            data2, &checksum2, "blake3"
+        ));
+        assert!(!IntegrityHandler::verify_integrity(
+            data1, &checksum2, "blake3"
+        ));
+    }
+
+    #[test]
+    fn test_checksum_lengths() {
+        let data = b"Test data for checksum length verification";
+
+        // Test CRC32c length
+        let crc32c = IntegrityHandler::compute_checksum(data, "crc32c");
+        assert_eq!(crc32c.len(), 4);
+
+        // Test BLAKE3 length
+        let blake3 = IntegrityHandler::compute_checksum(data, "blake3");
+        assert_eq!(blake3.len(), 32);
+
+        // Test that lengths are validated
+        let config = IntegrityConfig {
+            enabled: true,
+            algorithm: "crc32c".to_string(),
+            xattr_namespace: "user.test".to_string(),
+        };
+
+        // Wrong length for CRC32c should fail
+        assert!(
+            IntegrityHandler::set_checksum_xattr(
+                std::path::Path::new("/tmp/test"),
+                &[1, 2, 3], // Only 3 bytes, should be 4
+                &config
+            )
+            .is_err()
+        );
+
+        let config_blake3 = IntegrityConfig {
+            enabled: true,
+            algorithm: "blake3".to_string(),
+            xattr_namespace: "user.test".to_string(),
+        };
+
+        // Wrong length for BLAKE3 should fail
+        assert!(
+            IntegrityHandler::set_checksum_xattr(
+                std::path::Path::new("/tmp/test"),
+                &[1, 2, 3, 4], // Only 4 bytes, should be 32
+                &config_blake3
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn test_backward_compatibility() {
+        let data = b"Legacy data with CRC32c checksum";
+
+        // Legacy CRC32c method should still work
+        let legacy_checksum = IntegrityHandler::compute_checksum_legacy(data);
+        assert!(IntegrityHandler::verify_integrity_legacy(
+            data,
+            legacy_checksum
+        ));
+
+        // New method with CRC32c should produce same result
+        let new_checksum = IntegrityHandler::compute_checksum(data, "crc32c");
+        let new_checksum_u32 = u32::from_le_bytes(new_checksum.try_into().unwrap());
+        assert_eq!(legacy_checksum, new_checksum_u32);
+    }
+
+    #[test]
+    fn test_algorithm_case_insensitivity() {
+        let data = b"Case insensitive algorithm test";
+
+        // Test case insensitivity
+        let checksum1 = IntegrityHandler::compute_checksum(data, "BLAKE3");
+        let checksum2 = IntegrityHandler::compute_checksum(data, "blake3");
+        let checksum3 = IntegrityHandler::compute_checksum(data, "BlAkE3");
+
+        assert_eq!(checksum1, checksum2);
+        assert_eq!(checksum2, checksum3);
+
+        assert!(IntegrityHandler::is_algorithm_supported("BLAKE3"));
+        assert!(IntegrityHandler::is_algorithm_supported("crc32c"));
+        assert!(IntegrityHandler::is_algorithm_supported("CRC32C"));
     }
 }

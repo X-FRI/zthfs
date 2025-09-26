@@ -112,7 +112,11 @@ impl FileSystemOperations {
         // Verify integrity
         if let Some(expected_checksum) =
             IntegrityHandler::get_checksum_from_xattr(&real_path, &fs.config.integrity)?
-            && !IntegrityHandler::verify_integrity(&encrypted_data, expected_checksum)
+            && !IntegrityHandler::verify_integrity(
+                &encrypted_data,
+                &expected_checksum,
+                &fs.config.integrity.algorithm,
+            )
         {
             log::warn!("Data integrity check failed for {path:?}");
             return Err(ZthfsError::Integrity(
@@ -178,13 +182,14 @@ impl FileSystemOperations {
         let encrypted_data = fs.encryption.encrypt(data, &path_str)?;
 
         // Compute checksum
-        let checksum = IntegrityHandler::compute_checksum(&encrypted_data);
+        let checksum =
+            IntegrityHandler::compute_checksum(&encrypted_data, &fs.config.integrity.algorithm);
 
         // Write encrypted data
         fs::write(&real_path, &encrypted_data)?;
 
         // Set checksum extended attribute
-        IntegrityHandler::set_checksum_xattr(&real_path, checksum, &fs.config.integrity)?;
+        IntegrityHandler::set_checksum_xattr(&real_path, &checksum, &fs.config.integrity)?;
 
         Ok(())
     }
@@ -404,7 +409,11 @@ impl FileSystemOperations {
         // Verify integrity
         if let Some(expected_checksum) =
             IntegrityHandler::get_checksum_from_xattr(&chunk_path, &fs.config.integrity)?
-            && !IntegrityHandler::verify_integrity(&encrypted_data, expected_checksum)
+            && !IntegrityHandler::verify_integrity(
+                &encrypted_data,
+                &expected_checksum,
+                &fs.config.integrity.algorithm,
+            )
         {
             log::warn!("Data integrity check failed for chunk {chunk_index} of {path:?}");
             return Err(ZthfsError::Integrity(format!(
@@ -432,13 +441,14 @@ impl FileSystemOperations {
         let encrypted_data = fs.encryption.encrypt(data, &path_str)?;
 
         // Compute checksum
-        let checksum = IntegrityHandler::compute_checksum(&encrypted_data);
+        let checksum =
+            IntegrityHandler::compute_checksum(&encrypted_data, &fs.config.integrity.algorithm);
 
         // Write encrypted data
         fs::write(&chunk_path, &encrypted_data)?;
 
         // Set checksum extended attribute
-        IntegrityHandler::set_checksum_xattr(&chunk_path, checksum, &fs.config.integrity)?;
+        IntegrityHandler::set_checksum_xattr(&chunk_path, &checksum, &fs.config.integrity)?;
 
         Ok(())
     }
