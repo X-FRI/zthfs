@@ -19,7 +19,7 @@ graph TD
         B[ZTHFS]
         subgraph Core Modules
             B1["Encryption<br/>(AES-256-GCM + BLAKE3 Nonce)"]
-            B2["Integrity<br/>(CRC32c + Chunked Verification)"]
+            B2["Integrity<br/>(BLAKE3 MAC + Chunked Verification)"]
             B3["Logging<br/>(Async JSON Logs + Channel)"]
         end
         subgraph Security Engine
@@ -138,7 +138,9 @@ ZTHFS uses JSON configuration files, supporting hot reloading:
   },
   "integrity": {
     "enabled": true,
-    "xattr_namespace": "zthfs.checksum"
+    "algorithm": "blake3",
+    "xattr_namespace": "zthfs.checksum",
+    "key": "32-byte-hex-encoded-integrity-key-here"
   },
   "performance": {
     "max_concurrent_operations": 100,
@@ -279,11 +281,13 @@ let data = b"sensitive medical data";
 let path = "/patient/records.txt";
 let encrypted = encryptor.encrypt(data, path)?;
 
-// Verify integrity
+// Verify integrity with cryptographic MAC
 use zthfs::core::integrity::IntegrityHandler;
+use zthfs::config::IntegrityConfig;
 
-let checksum = IntegrityHandler::compute_checksum(&encrypted);
-let is_valid = IntegrityHandler::verify_integrity(&encrypted, checksum);
+let config = IntegrityConfig::new(); // Secure random key
+let mac = IntegrityHandler::compute_checksum(&encrypted, "blake3", &config.key);
+let is_valid = IntegrityHandler::verify_integrity(&encrypted, &mac, "blake3", &config.key);
 ```
 
 ## Performance Metrics
@@ -296,7 +300,7 @@ Encryption Performance (AES-256-GCM + BLAKE3 Nonce Generation):
 - 1MB encrypt: 596.62μs (+48% vs previous - security trade-off)
 - Nonce generation (BLAKE3): 15.502ns (-3.1% improvement vs CRC32c)
 
-Integrity Verification (CRC32c + Extended Attributes):
+Integrity Verification (BLAKE3 MAC + Extended Attributes):
 - Checksum computation (1KB): 127.73ns (-3.2% improvement)
 - Checksum computation (1MB): 122.74μs (-4.9% improvement)
 - Integrity verification (1KB): 129.20ns (-3.0% improvement)
@@ -568,25 +572,25 @@ Recommendation: For optimal performance in production environments:
 
 ### HIPAA Compliance
 
-| Requirement            | Implementation Status | Description                                         |
-| ---------------------- | --------------------- | --------------------------------------------------- |
-| Static Data Encryption | ✅ Enhanced            | AES-256-GCM + BLAKE3 cryptographically secure nonce |
-| Access Control         | ✅ POSIX Compliant     | User/group permissions + file mode (rwx) bits       |
-| Data Integrity         | ✅ Validated           | CRC32c checksum with algorithm validation           |
-| Audit Logging          | ✅ Async High-Perf     | Channel-based async logging, lock-free processing   |
-| Transport Security     | ✅ Enhanced            | End-to-end encryption with partial write support    |
-| Security Architecture  | ✅ Zero-Trust          | Path traversal protection, executable file blocking |
+| Requirement            | Implementation Status      | Description                                         |
+| ---------------------- | -------------------------- | --------------------------------------------------- |
+| Static Data Encryption | ✅ Enhanced                 | AES-256-GCM + BLAKE3 cryptographically secure nonce |
+| Access Control         | ✅ POSIX Compliant          | User/group permissions + file mode (rwx) bits       |
+| Data Integrity         | ✅ Cryptographically Secure | BLAKE3 MAC with keyed verification                  |
+| Audit Logging          | ✅ Async High-Perf          | Channel-based async logging, lock-free processing   |
+| Transport Security     | ✅ Enhanced                 | End-to-end encryption with partial write support    |
+| Security Architecture  | ✅ Zero-Trust               | Path traversal protection, executable file blocking |
 
 ### GDPR Compliance
 
-| Requirement       | Implementation Status | Description                                    |
-| ----------------- | --------------------- | ---------------------------------------------- |
-| Data Protection   | ✅ Enhanced            | BLAKE3 nonce generation prevents data breaches |
-| Privacy Design    | ✅ Secure Defaults     | Insecure placeholder keys prevent accidents    |
-| Access Records    | ✅ Comprehensive       | Full POSIX permission audit trail              |
-| Data Minimization | ✅ Optimized           | Chunked storage with on-demand access          |
-| Transparency      | ✅ Documented          | Complete API documentation and security specs  |
-| Right to Erasure  | ✅ Supported           | Secure file deletion with integrity checks     |
+| Requirement       | Implementation Status      | Description                                     |
+| ----------------- | -------------------------- | ----------------------------------------------- |
+| Data Protection   | ✅ Cryptographically Secure | BLAKE3 MAC prevents data tampering and breaches |
+| Privacy Design    | ✅ Secure Defaults          | Insecure placeholder keys prevent accidents     |
+| Access Records    | ✅ Comprehensive            | Full POSIX permission audit trail               |
+| Data Minimization | ✅ Optimized                | Chunked storage with on-demand access           |
+| Transparency      | ✅ Documented               | Complete API documentation and security specs   |
+| Right to Erasure  | ✅ Supported                | Secure file deletion with integrity checks      |
 
 ## Monitoring and Operations
 
