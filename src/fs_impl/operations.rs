@@ -176,8 +176,7 @@ impl FileSystemOperations {
         } else {
             // For larger regular files that should have been chunked, convert to chunked
             log::warn!(
-                "Large regular file detected during partial write, converting to chunked storage: {:?}",
-                path
+                "Large regular file detected during partial write, converting to chunked storage: {path:?}"
             );
 
             // Read current content

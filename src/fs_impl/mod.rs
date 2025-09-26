@@ -110,10 +110,7 @@ impl Zthfs {
             // Skip path -> inode mappings (they have variable length keys)
         }
 
-        log::info!(
-            "Restored {} inode mappings from persistent storage",
-            restored_count
-        );
+        log::info!("Restored {restored_count} inode mappings from persistent storage");
         Ok(())
     }
 
@@ -135,9 +132,7 @@ impl Zthfs {
             inode_db.apply_batch(batch)?;
 
             log::info!(
-                "Initialized root directory inode mapping: {} -> inode {}",
-                root_path,
-                ROOT_INODE
+                "Initialized root directory inode mapping: {root_path} -> inode {ROOT_INODE}"
             );
         }
 
