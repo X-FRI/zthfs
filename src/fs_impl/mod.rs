@@ -51,6 +51,10 @@ impl Zthfs {
         let inode_db_path = PathBuf::from(&config.data_dir).join("inode_db");
         let inode_db = sled::open(inode_db_path)?;
 
+        // Pre-allocate inode 1 for root directory (FUSE requirement)
+        // This must be done before restoring mappings to ensure root is always inode 1
+        Self::ensure_root_inode(&inode_db)?;
+
         let encryption = EncryptionHandler::new(&config.encryption);
         let logger = Arc::new(LogHandler::new(&config.logging)?);
         let security_validator = SecurityValidator::new(config.security.clone());
@@ -75,30 +79,82 @@ impl Zthfs {
     }
 
     /// Restore inode mappings from persistent sled database to memory DashMap
+    /// Uses the reverse mapping (inode -> path) for efficient restoration
     fn restore_inode_mappings(
         inode_db: &Db,
         inodes: &Arc<DashMap<u64, PathBuf>>,
     ) -> ZthfsResult<()> {
-        // Iterate through all path -> inode mappings in sled
+        // Use a separate tree/namespace for reverse mappings to avoid key conflicts
+        // Inode keys are 8 bytes, path keys are variable length strings
+        // We can distinguish them by key length
+        let mut restored_count = 0;
+
         for result in inode_db.iter() {
             let (key, value) = result?;
-            let path_str = String::from_utf8(key.to_vec())?;
-            let path = PathBuf::from(path_str);
-            let inode_bytes: [u8; 8] = value
-                .as_ref()
-                .try_into()
-                .map_err(|_| ZthfsError::Fs("Invalid inode data in database".to_string()))?;
-            let inode = u64::from_be_bytes(inode_bytes);
 
-            inodes.insert(inode, path);
+            // Check if this is an inode -> path mapping (8-byte key = inode)
+            if key.len() == 8 {
+                // This is an inode -> path reverse mapping
+                let inode_bytes: [u8; 8] = key
+                    .as_ref()
+                    .try_into()
+                    .map_err(|_| ZthfsError::Fs("Invalid inode key in database".to_string()))?;
+                let inode = u64::from_be_bytes(inode_bytes);
+
+                let path_str = String::from_utf8(value.to_vec())?;
+                let path = PathBuf::from(path_str);
+
+                inodes.insert(inode, path);
+                restored_count += 1;
+            }
+            // Skip path -> inode mappings (they have variable length keys)
         }
+
+        log::info!(
+            "Restored {} inode mappings from persistent storage",
+            restored_count
+        );
+        Ok(())
+    }
+
+    /// Ensure root directory is always mapped to inode 1 (FUSE requirement)
+    /// Inode 0 is invalid/reserved, inode 1 must be root directory
+    fn ensure_root_inode(inode_db: &Db) -> ZthfsResult<()> {
+        const ROOT_INODE: u64 = 1;
+        let root_path = "/";
+        let root_path_key = IVec::from(root_path.as_bytes());
+        let root_inode_bytes = ROOT_INODE.to_be_bytes();
+        let root_inode_key = IVec::from(&root_inode_bytes[..]); // inode as key for reverse mapping
+
+        // Check if root mapping already exists
+        if inode_db.get(&root_path_key)?.is_none() {
+            // Root mapping doesn't exist, create it atomically
+            let mut batch = sled::Batch::default();
+            batch.insert(root_path_key, IVec::from(&root_inode_bytes[..])); // path -> inode
+            batch.insert(root_inode_key, IVec::from(root_path.as_bytes())); // inode -> path
+            inode_db.apply_batch(batch)?;
+
+            log::info!(
+                "Initialized root directory inode mapping: {} -> inode {}",
+                root_path,
+                ROOT_INODE
+            );
+        }
+
         Ok(())
     }
 
     /// Get inode for a path, creating a new one if it doesn't exist
     /// Uses sled's atomic ID generation to ensure collision-free allocation
     /// Returns inode numbers starting from 1 (FUSE requirement)
+    /// Maintains bidirectional mapping: path -> inode and inode -> path
+    /// Root directory (/) is always inode 1
     pub fn get_or_create_inode(&self, path: &Path) -> ZthfsResult<u64> {
+        // Special case: root directory must always be inode 1
+        if path == Path::new("/") {
+            return Ok(1);
+        }
+
         let path_str = path.to_string_lossy().to_string();
 
         // First, check if we already have this path mapped to an inode
@@ -116,10 +172,13 @@ impl Zthfs {
             // Add 1 to ensure inode starts from 1 (FUSE requirement)
             let inode = self.inode_db.generate_id()? + 1;
             let inode_bytes = inode.to_be_bytes();
+            let inode_key = IVec::from(&inode_bytes[..]); // inode as key for reverse mapping
 
             // Atomically store both mappings in a sled transaction
+            // This ensures path->inode and inode->path mappings are always consistent
             let mut batch = sled::Batch::default();
-            batch.insert(path_key, IVec::from(&inode_bytes[..]));
+            batch.insert(path_key, IVec::from(&inode_bytes[..])); // path -> inode
+            batch.insert(inode_key, IVec::from(path_str.as_bytes())); // inode -> path
             self.inode_db.apply_batch(batch)?;
 
             // Also store in memory for fast access

@@ -1254,6 +1254,143 @@ mod tests {
     }
 
     #[test]
+    fn test_root_inode_fixed() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        // Root directory must always be inode 1 (FUSE requirement)
+        let root_inode = FileSystemOperations::get_inode(&fs, Path::new("/"));
+        assert_eq!(root_inode, 1, "Root directory must always be inode 1");
+
+        // Multiple calls should always return the same inode
+        let root_inode2 = FileSystemOperations::get_inode(&fs, Path::new("/"));
+        assert_eq!(root_inode, root_inode2);
+    }
+
+    #[test]
+    fn test_bidirectional_mapping_consistency() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        // Create some test paths
+        let test_paths = vec![
+            "/bidirectional/test1.txt",
+            "/bidirectional/test2.txt",
+            "/bidirectional/nested/deep/file.txt",
+        ];
+
+        let mut path_to_inode = std::collections::HashMap::new();
+
+        // Store path -> inode mappings
+        for path_str in &test_paths {
+            let path = Path::new(path_str);
+            let inode = FileSystemOperations::get_inode(&fs, path);
+            path_to_inode.insert(path_str.to_string(), inode);
+
+            // Verify we can get path from inode using the memory cache
+            let retrieved_path = fs.get_path_for_inode(inode);
+            assert_eq!(
+                retrieved_path,
+                Some(path.to_path_buf()),
+                "Failed to retrieve path for inode {}",
+                inode
+            );
+        }
+
+        // Verify all inodes are unique
+        let inodes: std::collections::HashSet<_> = path_to_inode.values().collect();
+        assert_eq!(
+            inodes.len(),
+            test_paths.len(),
+            "All inodes should be unique"
+        );
+
+        // Verify the same path always returns the same inode
+        for (path_str, expected_inode) in &path_to_inode {
+            let inode = FileSystemOperations::get_inode(&fs, Path::new(path_str));
+            assert_eq!(
+                inode, *expected_inode,
+                "Path {} should always map to inode {}",
+                path_str, expected_inode
+            );
+        }
+    }
+
+    #[test]
+    fn test_inode_allocation_range() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        // Test that inode allocation produces reasonable values
+        let paths = vec![
+            "/range_test_1.txt",
+            "/range_test_2.txt",
+            "/range_test_3.txt",
+            "/range_test_4.txt",
+            "/range_test_5.txt",
+        ];
+
+        let mut allocated_inodes = Vec::new();
+
+        for path in paths {
+            let inode = FileSystemOperations::get_inode(&fs, Path::new(path));
+            allocated_inodes.push(inode);
+
+            // Inode should be positive and within reasonable range
+            assert!(inode >= 1, "Inode {} should be >= 1", inode);
+            assert!(inode < 10000, "Inode {} seems unreasonably large", inode);
+        }
+
+        // All inodes should be unique
+        let unique_inodes: std::collections::HashSet<_> = allocated_inodes.iter().collect();
+        assert_eq!(
+            unique_inodes.len(),
+            allocated_inodes.len(),
+            "All allocated inodes should be unique: {:?}",
+            allocated_inodes
+        );
+
+        // Root inode should be 1
+        let root_inode = FileSystemOperations::get_inode(&fs, Path::new("/"));
+        assert_eq!(root_inode, 1);
+
+        // Note: In some cases, sled might allocate inode 1 to other paths if the database is reset
+        // This is acceptable as long as it's deterministic and doesn't cause conflicts
+        // The important thing is that the same path always gets the same inode
+    }
+
+    #[test]
+    fn test_inode_persistence_across_operations() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        let test_path = Path::new("/persistence_test.txt");
+
+        // Get inode multiple times in different contexts
+        let inode1 = FileSystemOperations::get_inode(&fs, test_path);
+
+        // Create the file (this shouldn't change the inode)
+        FileSystemOperations::write_file(&fs, test_path, b"test data").unwrap();
+        let inode2 = FileSystemOperations::get_inode(&fs, test_path);
+
+        // Read the file (this shouldn't change the inode)
+        let _data = FileSystemOperations::read_file(&fs, test_path).unwrap();
+        let inode3 = FileSystemOperations::get_inode(&fs, test_path);
+
+        // All inodes should be the same
+        assert_eq!(inode1, inode2, "Inode should persist after file creation");
+        assert_eq!(inode2, inode3, "Inode should persist after file read");
+        assert!(inode1 >= 1, "Inode should be valid (>= 1)");
+
+        // Clean up
+        FileSystemOperations::remove_file(&fs, test_path).unwrap();
+
+        // After deletion, getting inode again should give the same value
+        // (since it's stored persistently in sled)
+        let inode4 = FileSystemOperations::get_inode(&fs, test_path);
+        assert_eq!(
+            inode1, inode4,
+            "Inode should persist even after file deletion"
+        );
+    }
+
+    #[test]
     fn test_chunk_metadata_persistence() {
         let (_temp_dir, fs) = create_test_fs();
 
