@@ -286,6 +286,94 @@ impl From<aes_gcm::Error> for ZthfsError {
 }
 ```
 
+### Inode Management System
+
+ZTHFS implements a robust inode allocation system using the sled embedded database to ensure collision-free inode assignment and filesystem consistency.
+
+#### Zthfs Struct Inode Methods
+
+```rust
+use zthfs::fs_impl::Zthfs;
+use std::path::Path;
+
+// Get or create inode for a path (collision-free allocation)
+let inode = fs.get_or_create_inode(Path::new("/medical/record.txt"))?;
+
+// Get path for an inode (reverse lookup)
+if let Some(path) = fs.get_path_for_inode(inode) {
+    println!("Inode {} maps to path: {}", inode, path.display());
+}
+```
+
+#### Filesystem Operations Inode Methods
+
+```rust
+use zthfs::fs_impl::operations::FileSystemOperations;
+
+// Get inode for any path (automatic allocation if needed)
+let inode = FileSystemOperations::get_inode(&fs, Path::new("/patient/data.dcm"));
+// Root directory always returns inode 1
+assert_eq!(FileSystemOperations::get_inode(&fs, Path::new("/")), 1);
+```
+
+#### Key Features
+
+- **Atomic Allocation**: Uses `sled.generate_id()` for guaranteed unique inode numbers
+- **Bidirectional Mapping**: Maintains both path→inode and inode→path mappings
+- **Transactional Updates**: All mapping changes are atomic using sled transactions
+- **FUSE Compliance**: Root directory (/) is always inode 1
+- **Persistent Storage**: Inode mappings survive system restarts
+- **Memory Caching**: Fast lookups through in-memory DashMap
+
+#### Technical Implementation
+
+```rust
+impl Zthfs {
+    /// Get or create inode for a path with collision-free allocation
+    pub fn get_or_create_inode(&self, path: &Path) -> ZthfsResult<u64> {
+        // Special case: root directory always inode 1
+        if path == Path::new("/") {
+            return Ok(1);
+        }
+
+        let path_str = path.to_string_lossy().to_string();
+        let path_key = IVec::from(path_str.as_bytes());
+
+        // Check for existing mapping
+        if let Some(inode_bytes) = self.inode_db.get(&path_key)? {
+            let inode = u64::from_be_bytes(inode_bytes.as_ref().try_into()?);
+            return Ok(inode);
+        }
+
+        // Allocate new inode atomically
+        let inode = self.inode_db.generate_id()? + 1;
+        let inode_bytes = inode.to_be_bytes();
+
+        // Atomic bidirectional update
+        let mut batch = sled::Batch::default();
+        batch.insert(path_key, IVec::from(&inode_bytes[..]));     // path -> inode
+        batch.insert(IVec::from(&inode_bytes[..]), IVec::from(path_str.as_bytes())); // inode -> path
+        self.inode_db.apply_batch(batch)?;
+
+        // Update memory cache
+        self.inodes.insert(inode, path.to_path_buf());
+
+        Ok(inode)
+    }
+
+    /// Get path for inode (reverse lookup)
+    pub fn get_path_for_inode(&self, inode: u64) -> Option<PathBuf> {
+        self.inodes.get(&inode).map(|p| p.clone())
+    }
+}
+```
+
+#### Security Benefits
+
+- **Eliminates Hash Collisions**: Previous hash-based approach could cause file overwrites
+- **Data Integrity**: Each file gets a unique, persistent inode number
+- **Filesystem Consistency**: Prevents inode conflicts in concurrent operations
+
 ## Testing
 
 ### Unit Tests
@@ -393,6 +481,61 @@ mod integration_tests {
 
         // Clean up
         FileSystemOperations::remove_file(&fs, path).unwrap();
+    }
+
+    #[test]
+    fn test_inode_allocation_consistency() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        // Test that inode allocation is deterministic
+        let path = Path::new("/inode_test.txt");
+
+        // Get inode multiple times - should always be the same
+        let inode1 = FileSystemOperations::get_inode(&fs, path);
+        let inode2 = FileSystemOperations::get_inode(&fs, path);
+        assert_eq!(inode1, inode2);
+
+        // Root directory should always be inode 1
+        let root_inode = FileSystemOperations::get_inode(&fs, Path::new("/"));
+        assert_eq!(root_inode, 1);
+        assert_ne!(inode1, root_inode); // Regular files shouldn't get root inode
+    }
+
+    #[test]
+    fn test_bidirectional_inode_mapping() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        // Create a test file
+        let test_path = Path::new("/bidirectional_test.txt");
+        FileSystemOperations::write_file(&fs, test_path, b"test data").unwrap();
+
+        // Get its inode
+        let inode = FileSystemOperations::get_inode(&fs, test_path);
+
+        // Verify we can get the path back from inode
+        let retrieved_path = fs.get_path_for_inode(inode);
+        assert_eq!(retrieved_path, Some(test_path.to_path_buf()));
+
+        // Clean up
+        FileSystemOperations::remove_file(&fs, test_path).unwrap();
+    }
+
+    #[test]
+    fn test_inode_collision_resistance() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        // Test many different paths to ensure no inode collisions
+        let mut inodes = std::collections::HashSet::new();
+
+        for i in 0..100 {
+            let path_str = format!("/collision_test_file_{}.txt", i);
+            let path = Path::new(&path_str);
+            let inode = FileSystemOperations::get_inode(&fs, path);
+
+            // Each inode should be unique
+            assert!(inodes.insert(inode), "Inode collision detected for {}", path_str);
+            assert!(inode >= 1, "Inode should be >= 1 for {}", path_str);
+        }
     }
 
     #[test]

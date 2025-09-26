@@ -21,6 +21,7 @@ graph TD
             B1["Encryption<br/>(AES-256-GCM + BLAKE3 Nonce)"]
             B2["Integrity<br/>(BLAKE3 MAC + Chunked Verification)"]
             B3["Logging<br/>(Async JSON Logs + Channel)"]
+            B6["Inode Management<br/>(Sled DB + Bidirectional Mapping)"]
         end
         subgraph Security Engine
             B4["POSIX Permissions<br/>(User/Group + File Mode)"]
@@ -33,6 +34,7 @@ graph TD
         B --> B3
         B --> B4
         B --> B5
+        B --> B6
     end
 
     subgraph Kernel VFS
@@ -61,7 +63,7 @@ src/
 ├── errors/              # Comprehensive error handling
 │   └── mod.rs           # Custom error types and conversions
 ├── fs_impl/             # FUSE filesystem implementation
-│   ├── mod.rs           # Main filesystem struct and FUSE integration
+│   ├── mod.rs           # Main filesystem struct with sled inode management
 │   ├── operations.rs    # File operations with chunking and partial writes
 │   ├── security.rs      # POSIX permissions and access control
 │   └── utils.rs         # Filesystem utility functions
@@ -311,7 +313,7 @@ Asynchronous Logging Performance (Channel-based Architecture):
 - Batch 100 messages: 45.386μs (efficient batching)
 - Performance data logging: 589.83ns (structured metadata)
 
-Filesystem Operations (Chunked Storage + Partial Writes + Security):
+Filesystem Operations (Chunked Storage + Partial Writes + Security + Inode Management):
 - File read (1KB): 7.27μs (+7.8% vs previous - security checks)
 - File write (1KB): 9.64μs (+1.6% vs previous - partial write support)
 - File read (1MB): 1.42ms (+25.7% vs previous - enhanced chunking)
