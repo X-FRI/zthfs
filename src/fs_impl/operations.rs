@@ -756,15 +756,10 @@ mod tests {
         for path in paths {
             let inode = FileSystemOperations::get_inode(&fs, Path::new(path));
             // Each inode should be unique and > 0
-            assert!(
-                inode > 0,
-                "Inode should be greater than 0 for path: {}",
-                path
-            );
+            assert!(inode > 0, "Inode should be greater than 0 for path: {path}");
             assert!(
                 inodes.insert(inode),
-                "Inode collision detected: {} appears multiple times",
-                inode
+                "Inode collision detected: {inode} appears multiple times"
             );
         }
 
@@ -1486,8 +1481,7 @@ mod tests {
             assert_eq!(
                 retrieved_path,
                 Some(path.to_path_buf()),
-                "Failed to retrieve path for inode {}",
-                inode
+                "Failed to retrieve path for inode {inode}"
             );
         }
 
@@ -1504,8 +1498,7 @@ mod tests {
             let inode = FileSystemOperations::get_inode(&fs, Path::new(path_str));
             assert_eq!(
                 inode, *expected_inode,
-                "Path {} should always map to inode {}",
-                path_str, expected_inode
+                "Path {path_str} should always map to inode {expected_inode}"
             );
         }
     }
@@ -1530,8 +1523,8 @@ mod tests {
             allocated_inodes.push(inode);
 
             // Inode should be positive and within reasonable range
-            assert!(inode >= 1, "Inode {} should be >= 1", inode);
-            assert!(inode < 10000, "Inode {} seems unreasonably large", inode);
+            assert!(inode >= 1, "Inode {inode} should be >= 1");
+            assert!(inode < 10000, "Inode {inode} seems unreasonably large");
         }
 
         // All inodes should be unique
@@ -1539,8 +1532,7 @@ mod tests {
         assert_eq!(
             unique_inodes.len(),
             allocated_inodes.len(),
-            "All allocated inodes should be unique: {:?}",
-            allocated_inodes
+            "All allocated inodes should be unique: {allocated_inodes:?}"
         );
 
         // Root inode should be 1

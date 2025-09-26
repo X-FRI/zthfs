@@ -380,7 +380,7 @@ fn bench_partial_writes(c: &mut Criterion) {
         ),
         (
             "chunk_extend_file",
-            file_size as i64 + 100,
+            file_size + 100,
             "EXTEND_FILE".as_bytes(),
         ),
     ];
@@ -542,7 +542,7 @@ fn bench_chunked_file_operations_detailed(c: &mut Criterion) {
         // Benchmark partial write in different chunks
         let write_data = b"MODIFY_CHUNK_DATA";
         for (pos_label, offset) in &chunk_positions {
-            let bench_name = format!("chunked_partial_write_{}_{}", label, pos_label);
+            let bench_name = format!("chunked_partial_write_{label}_{pos_label}");
             group.bench_function(bench_name, |b| {
                 b.iter(|| {
                     let _ = FileSystemOperations::write_partial(
