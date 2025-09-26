@@ -118,6 +118,13 @@ log_info "Setting permissions..."
 chown -R zthfs:zthfs /var/lib/zthfs
 chown -R zthfs:zthfs /var/log/zthfs
 
+# Set permissions for mount point
+if [[ -d /mnt/zthfs ]]; then
+    chown zthfs:zthfs /mnt/zthfs
+    chmod 755 /mnt/zthfs
+    log_info "Set permissions for mount point /mnt/zthfs"
+fi
+
 # Add zthfs user to fuse group (if it exists)
 if getent group fuse > /dev/null 2>&1; then
     usermod -a -G fuse zthfs
@@ -135,26 +142,25 @@ log_info "Installing systemd service..."
 cat > /etc/systemd/system/zthfs.service << EOF
 [Unit]
 Description=ZTHFS Medical Filesystem
-After=network.target fuse.service
+After=network.target
 RequiresMountsFor=/var/lib/zthfs
 
 [Service]
 Type=simple
-User=zthfs
-Group=zthfs
+User=root
 ExecStart=/usr/local/bin/zthfs mount /mnt/zthfs /var/lib/zthfs/data --config /etc/zthfs/config.json
 ExecStop=/usr/local/bin/zthfs unmount /mnt/zthfs
-Restart=always
+Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
-# Security settings
-NoNewPrivileges=yes
+# Security settings (running as root for FUSE access)
+NoNewPrivileges=no
 PrivateTmp=yes
 ProtectHome=yes
-ProtectSystem=strict
-ReadWritePaths=/var/lib/zthfs /var/log/zthfs /mnt/zthfs
+ProtectSystem=full
+ReadWritePaths=/var/lib/zthfs /var/log/zthfs /mnt/zthfs /etc/zthfs
 
 [Install]
 WantedBy=multi-user.target
@@ -175,6 +181,6 @@ log_info "4. View logs: journalctl -u zthfs -f"
 log_info "5. Test mount: ls -la /mnt/zthfs/"
 log_info ""
 log_info "To uninstall ZTHFS later, run:"
-log_info "curl -fsSL https://raw.githubusercontent.com/x-fri/zthfs/main/uninstall.sh | sudo bash"
+log_info "curl -O https://raw.githubusercontent.com/x-fri/zthfs/main/uninstall.sh | sudo bash uninstall.sh"
 log_info ""
 log_warn "Remember to backup your encryption keys from /etc/zthfs/config.json"

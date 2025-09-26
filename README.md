@@ -108,7 +108,7 @@ cargo run -- demo
 curl -fsSL https://raw.githubusercontent.com/x-fri/zthfs/main/deploy.sh | sudo bash
 
 # To uninstall ZTHFS:
-curl -fsSL https://raw.githubusercontent.com/x-fri/zthfs/main/uninstall.sh | sudo bash
+curl -O https://raw.githubusercontent.com/x-fri/zthfs/main/uninstall.sh | sudo bash uninstall.sh
 ```
 
 ## Configuration Management

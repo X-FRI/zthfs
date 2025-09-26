@@ -141,13 +141,21 @@ else
         log_info "Removed /etc/zthfs"
     fi
 
-    # Remove mount point directory (only if empty)
-    if [[ -d /mnt/zthfs ]] && [[ ! "$(ls -A /mnt/zthfs 2>/dev/null)" ]]; then
-        rmdir /mnt/zthfs 2>/dev/null || true
-        log_info "Removed empty mount point /mnt/zthfs"
-    elif [[ -d /mnt/zthfs ]]; then
-        log_warn "Mount point /mnt/zthfs is not empty, preserving it"
-    fi
+# Reset mount point permissions (if it exists and we're not removing data)
+if [[ -d /mnt/zthfs ]] && [[ "$PRESERVE_DATA" == "true" ]]; then
+    # Reset permissions to allow access by other users
+    chown root:root /mnt/zthfs 2>/dev/null || true
+    chmod 755 /mnt/zthfs 2>/dev/null || true
+    log_info "Reset permissions for mount point /mnt/zthfs"
+fi
+
+# Remove mount point directory (only if empty and not preserving data)
+if [[ -d /mnt/zthfs ]] && [[ ! "$(ls -A /mnt/zthfs 2>/dev/null)" ]] && [[ "$PRESERVE_DATA" == "false" ]]; then
+    rmdir /mnt/zthfs 2>/dev/null || true
+    log_info "Removed empty mount point /mnt/zthfs"
+elif [[ -d /mnt/zthfs ]] && [[ "$PRESERVE_DATA" == "false" ]]; then
+    log_warn "Mount point /mnt/zthfs is not empty, preserving it"
+fi
 fi
 
 # Remove zthfs user and group (only if they exist and are not used elsewhere)
