@@ -12,17 +12,22 @@ impl IntegrityHandler {
         crc32c(data)
     }
 
-    /// Compute cryptographically secure checksum using BLAKE3
-    pub fn compute_blake3_checksum(data: &[u8]) -> Vec<u8> {
-        let hash = blake3::hash(data);
+    /// Compute cryptographically secure checksum using BLAKE3 with keyed hash (MAC)
+    pub fn compute_blake3_checksum(data: &[u8], key: &[u8]) -> Vec<u8> {
+        // Ensure key is exactly 32 bytes for BLAKE3
+        let mut key_array = [0u8; 32];
+        let key_len = key.len().min(32);
+        key_array[..key_len].copy_from_slice(&key[..key_len]);
+
+        let hash = blake3::keyed_hash(&key_array, data);
         hash.as_bytes().to_vec()
     }
 
     /// Compute checksum based on algorithm (returns Vec<u8> for variable length)
-    pub fn compute_checksum(data: &[u8], algorithm: &str) -> Vec<u8> {
+    pub fn compute_checksum(data: &[u8], algorithm: &str, key: &[u8]) -> Vec<u8> {
         match algorithm.to_lowercase().as_str() {
             "crc32c" => Self::compute_crc32c_checksum(data).to_le_bytes().to_vec(),
-            "blake3" => Self::compute_blake3_checksum(data),
+            "blake3" => Self::compute_blake3_checksum(data, key),
             _ => panic!("Unsupported algorithm: {algorithm}"),
         }
     }
@@ -33,8 +38,13 @@ impl IntegrityHandler {
     }
 
     /// Verify the integrity of the data using the specified algorithm
-    pub fn verify_integrity(data: &[u8], expected_checksum: &[u8], algorithm: &str) -> bool {
-        let computed = Self::compute_checksum(data, algorithm);
+    pub fn verify_integrity(
+        data: &[u8],
+        expected_checksum: &[u8],
+        algorithm: &str,
+        key: &[u8],
+    ) -> bool {
+        let computed = Self::compute_checksum(data, algorithm, key);
         computed == expected_checksum
     }
 
@@ -174,13 +184,14 @@ mod tests {
     #[test]
     fn test_checksum_computation() {
         let data = b"Hello, world!";
+        let key = b"0123456789abcdef0123456789abcdef"; // 32-byte test key
 
         // Test CRC32c
-        let crc32c_checksum = IntegrityHandler::compute_checksum(data, "crc32c");
+        let crc32c_checksum = IntegrityHandler::compute_checksum(data, "crc32c", key);
         assert_eq!(crc32c_checksum.len(), 4);
 
         // Test BLAKE3
-        let blake3_checksum = IntegrityHandler::compute_checksum(data, "blake3");
+        let blake3_checksum = IntegrityHandler::compute_checksum(data, "blake3", key);
         assert_eq!(blake3_checksum.len(), 32);
 
         // Both should be non-zero
@@ -191,31 +202,36 @@ mod tests {
     #[test]
     fn test_integrity_verification() {
         let data = b"Hello, world!";
+        let key = b"0123456789abcdef0123456789abcdef"; // 32-byte test key
 
         // Test CRC32c verification
-        let crc32c_checksum = IntegrityHandler::compute_checksum(data, "crc32c");
+        let crc32c_checksum = IntegrityHandler::compute_checksum(data, "crc32c", key);
         assert!(IntegrityHandler::verify_integrity(
             data,
             &crc32c_checksum,
-            "crc32c"
+            "crc32c",
+            key
         ));
         assert!(!IntegrityHandler::verify_integrity(
             b"Hello, world",
             &crc32c_checksum,
-            "crc32c"
+            "crc32c",
+            key
         ));
 
         // Test BLAKE3 verification
-        let blake3_checksum = IntegrityHandler::compute_checksum(data, "blake3");
+        let blake3_checksum = IntegrityHandler::compute_checksum(data, "blake3", key);
         assert!(IntegrityHandler::verify_integrity(
             data,
             &blake3_checksum,
-            "blake3"
+            "blake3",
+            key
         ));
         assert!(!IntegrityHandler::verify_integrity(
             b"Hello, world",
             &blake3_checksum,
-            "blake3"
+            "blake3",
+            key
         ));
     }
 
@@ -271,6 +287,7 @@ mod tests {
             enabled: true,
             algorithm: "sha256".to_string(),
             xattr_namespace: "user.zthfs".to_string(),
+            key: vec![1; 32], // Dummy key for test
         };
         assert!(IntegrityHandler::validate_config(&config).is_err());
 
@@ -279,6 +296,7 @@ mod tests {
             enabled: true,
             algorithm: "crc32c".to_string(),
             xattr_namespace: "".to_string(),
+            key: vec![1; 32], // Dummy key for test
         };
         assert!(IntegrityHandler::validate_config(&config).is_err());
 
@@ -287,6 +305,7 @@ mod tests {
             enabled: false,
             algorithm: "invalid".to_string(),
             xattr_namespace: "".to_string(),
+            key: vec![1; 32], // Dummy key for test
         };
         assert!(IntegrityHandler::validate_config(&config).is_ok());
     }
@@ -294,20 +313,23 @@ mod tests {
     #[test]
     fn test_cryptographic_vs_non_cryptographic() {
         let data = b"Sensitive medical data that must be protected";
+        let key = b"0123456789abcdef0123456789abcdef"; // 32-byte test key
 
         // Both algorithms should work for basic integrity
-        let crc32c_checksum = IntegrityHandler::compute_checksum(data, "crc32c");
-        let blake3_checksum = IntegrityHandler::compute_checksum(data, "blake3");
+        let crc32c_checksum = IntegrityHandler::compute_checksum(data, "crc32c", key);
+        let blake3_checksum = IntegrityHandler::compute_checksum(data, "blake3", key);
 
         assert!(IntegrityHandler::verify_integrity(
             data,
             &crc32c_checksum,
-            "crc32c"
+            "crc32c",
+            key
         ));
         assert!(IntegrityHandler::verify_integrity(
             data,
             &blake3_checksum,
-            "blake3"
+            "blake3",
+            key
         ));
 
         // But they have different properties
@@ -323,35 +345,37 @@ mod tests {
         // BLAKE3 has strong collision resistance properties
         let data1 = b"Medical record A: Patient has condition X";
         let data2 = b"Medical record B: Patient has condition Y";
+        let key = b"0123456789abcdef0123456789abcdef"; // 32-byte test key
 
-        let checksum1 = IntegrityHandler::compute_checksum(data1, "blake3");
-        let checksum2 = IntegrityHandler::compute_checksum(data2, "blake3");
+        let checksum1 = IntegrityHandler::compute_checksum(data1, "blake3", key);
+        let checksum2 = IntegrityHandler::compute_checksum(data2, "blake3", key);
 
         // Different inputs should produce different hashes
         assert_ne!(checksum1, checksum2);
 
         // Verify integrity
         assert!(IntegrityHandler::verify_integrity(
-            data1, &checksum1, "blake3"
+            data1, &checksum1, "blake3", key
         ));
         assert!(IntegrityHandler::verify_integrity(
-            data2, &checksum2, "blake3"
+            data2, &checksum2, "blake3", key
         ));
         assert!(!IntegrityHandler::verify_integrity(
-            data1, &checksum2, "blake3"
+            data1, &checksum2, "blake3", key
         ));
     }
 
     #[test]
     fn test_checksum_lengths() {
         let data = b"Test data for checksum length verification";
+        let key = b"0123456789abcdef0123456789abcdef"; // 32-byte test key
 
         // Test CRC32c length
-        let crc32c = IntegrityHandler::compute_checksum(data, "crc32c");
+        let crc32c = IntegrityHandler::compute_checksum(data, "crc32c", key);
         assert_eq!(crc32c.len(), 4);
 
         // Test BLAKE3 length
-        let blake3 = IntegrityHandler::compute_checksum(data, "blake3");
+        let blake3 = IntegrityHandler::compute_checksum(data, "blake3", key);
         assert_eq!(blake3.len(), 32);
 
         // Test that lengths are validated
@@ -359,6 +383,7 @@ mod tests {
             enabled: true,
             algorithm: "crc32c".to_string(),
             xattr_namespace: "user.test".to_string(),
+            key: key.to_vec(),
         };
 
         // Wrong length for CRC32c should fail
@@ -375,6 +400,7 @@ mod tests {
             enabled: true,
             algorithm: "blake3".to_string(),
             xattr_namespace: "user.test".to_string(),
+            key: key.to_vec(),
         };
 
         // Wrong length for BLAKE3 should fail
@@ -391,6 +417,7 @@ mod tests {
     #[test]
     fn test_backward_compatibility() {
         let data = b"Legacy data with CRC32c checksum";
+        let key = b"0123456789abcdef0123456789abcdef"; // 32-byte test key
 
         // Legacy CRC32c method should still work
         let legacy_checksum = IntegrityHandler::compute_checksum_legacy(data);
@@ -400,7 +427,7 @@ mod tests {
         ));
 
         // New method with CRC32c should produce same result
-        let new_checksum = IntegrityHandler::compute_checksum(data, "crc32c");
+        let new_checksum = IntegrityHandler::compute_checksum(data, "crc32c", key);
         let new_checksum_u32 = u32::from_le_bytes(new_checksum.try_into().unwrap());
         assert_eq!(legacy_checksum, new_checksum_u32);
     }
@@ -408,11 +435,12 @@ mod tests {
     #[test]
     fn test_algorithm_case_insensitivity() {
         let data = b"Case insensitive algorithm test";
+        let key = b"0123456789abcdef0123456789abcdef"; // 32-byte test key
 
         // Test case insensitivity
-        let checksum1 = IntegrityHandler::compute_checksum(data, "BLAKE3");
-        let checksum2 = IntegrityHandler::compute_checksum(data, "blake3");
-        let checksum3 = IntegrityHandler::compute_checksum(data, "BlAkE3");
+        let checksum1 = IntegrityHandler::compute_checksum(data, "BLAKE3", key);
+        let checksum2 = IntegrityHandler::compute_checksum(data, "blake3", key);
+        let checksum3 = IntegrityHandler::compute_checksum(data, "BlAkE3", key);
 
         assert_eq!(checksum1, checksum2);
         assert_eq!(checksum2, checksum3);
@@ -420,5 +448,64 @@ mod tests {
         assert!(IntegrityHandler::is_algorithm_supported("BLAKE3"));
         assert!(IntegrityHandler::is_algorithm_supported("crc32c"));
         assert!(IntegrityHandler::is_algorithm_supported("CRC32C"));
+    }
+
+    #[test]
+    fn test_mac_security_different_keys() {
+        let data = b"Critical medical data that must be protected";
+        let key1 = b"0123456789abcdef0123456789abcdef"; // 32-byte test key 1
+        let key2 = b"fedcba9876543210fedcba9876543210"; // 32-byte test key 2
+
+        // Same data with different keys should produce different MACs
+        let mac1 = IntegrityHandler::compute_checksum(data, "blake3", key1);
+        let mac2 = IntegrityHandler::compute_checksum(data, "blake3", key2);
+
+        assert_ne!(mac1, mac2);
+
+        // Verify each MAC only works with its corresponding key
+        assert!(IntegrityHandler::verify_integrity(
+            data, &mac1, "blake3", key1
+        ));
+        assert!(IntegrityHandler::verify_integrity(
+            data, &mac2, "blake3", key2
+        ));
+
+        // MAC should fail with wrong key
+        assert!(!IntegrityHandler::verify_integrity(
+            data, &mac1, "blake3", key2
+        ));
+        assert!(!IntegrityHandler::verify_integrity(
+            data, &mac2, "blake3", key1
+        ));
+    }
+
+    #[test]
+    fn test_mac_prevents_forgery_attack() {
+        let original_data = b"Patient record: John Doe, Diagnosis: Normal";
+        let tampered_data = b"Patient record: John Doe, Diagnosis: Cancer";
+        let key = b"0123456789abcdef0123456789abcdef"; // 32-byte test key
+
+        // Compute MAC for original data
+        let original_mac = IntegrityHandler::compute_checksum(original_data, "blake3", key);
+
+        // Original data should verify
+        assert!(IntegrityHandler::verify_integrity(
+            original_data,
+            &original_mac,
+            "blake3",
+            key
+        ));
+
+        // Tampered data should NOT verify with original MAC
+        assert!(!IntegrityHandler::verify_integrity(
+            tampered_data,
+            &original_mac,
+            "blake3",
+            key
+        ));
+
+        // Even if attacker computes a new MAC for tampered data, it won't match the stored MAC
+        let tampered_mac = IntegrityHandler::compute_checksum(tampered_data, "blake3", key);
+        assert_ne!(original_mac, tampered_mac);
     }
 }

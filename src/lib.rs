@@ -166,6 +166,7 @@ mod integration_tests {
                 enabled: true,
                 algorithm: "invalid_algorithm".to_string(),
                 xattr_namespace: "user.zthfs".to_string(),
+                key: vec![1; 32], // Dummy key for test
             },
             performance: PerformanceConfig::default(),
             security: SecurityConfig::default(),

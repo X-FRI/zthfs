@@ -63,17 +63,22 @@ assert_eq!(data.to_vec(), decrypted);
 use zthfs::core::integrity::IntegrityHandler;
 use zthfs::config::IntegrityConfig;
 
-// Compute cryptographically secure checksum (BLAKE3 recommended for security)
+// Compute cryptographically secure MAC (BLAKE3 with keyed hash - prevents forgery)
 let data = b"medical data";
-let checksum = IntegrityHandler::compute_checksum(data, "blake3");
+let integrity_key = b"32_byte_secret_key_here123456789012"; // Must be 32 bytes
+let mac = IntegrityHandler::compute_checksum(data, "blake3", integrity_key);
 
-// Verify integrity with specified algorithm
-let is_valid = IntegrityHandler::verify_integrity(data, &checksum, "blake3");
+// Verify integrity with MAC - requires same key used for computation
+let is_valid = IntegrityHandler::verify_integrity(data, &mac, "blake3", integrity_key);
 assert!(is_valid);
 
-// Legacy CRC32c support (not recommended for production)
-let crc_checksum = IntegrityHandler::compute_checksum(data, "crc32c");
-let crc_valid = IntegrityHandler::verify_integrity(data, &crc_checksum, "crc32c");
+// Different key will fail verification (security feature)
+let wrong_key = b"different_key_1234567890123456789012";
+assert!(!IntegrityHandler::verify_integrity(data, &mac, "blake3", wrong_key));
+
+// Legacy CRC32c support (not recommended - vulnerable to forgery attacks)
+let crc_checksum = IntegrityHandler::compute_checksum(data, "crc32c", integrity_key);
+let crc_valid = IntegrityHandler::verify_integrity(data, &crc_checksum, "crc32c", integrity_key);
 
 // Store checksum using extended attributes
 let path = std::path::Path::new("/file.txt");

@@ -94,15 +94,35 @@ pub struct IntegrityConfig {
     pub algorithm: String,
     /// Extended attribute namespace
     pub xattr_namespace: String,
+    /// Secret key for cryptographic integrity verification (32 bytes for BLAKE3)
+    pub key: Vec<u8>,
+}
+
+impl IntegrityConfig {
+    /// Create a new IntegrityConfig with a secure random key
+    pub fn new() -> Self {
+        Self {
+            enabled: true,
+            algorithm: "blake3".to_string(),
+            xattr_namespace: "user.zthfs".to_string(),
+            key: EncryptionConfig::generate_key().to_vec(),
+        }
+    }
+
+    /// Create a new IntegrityConfig with a specific key
+    pub fn with_key(key: Vec<u8>) -> Self {
+        Self {
+            enabled: true,
+            algorithm: "blake3".to_string(),
+            xattr_namespace: "user.zthfs".to_string(),
+            key,
+        }
+    }
 }
 
 impl Default for IntegrityConfig {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            algorithm: "blake3".to_string(), // Use cryptographically secure BLAKE3 by default
-            xattr_namespace: "user.zthfs".to_string(),
-        }
+        Self::new()
     }
 }
 
@@ -237,6 +257,16 @@ impl FilesystemConfig {
         // Validate integrity configuration
         use crate::core::integrity::IntegrityHandler;
         IntegrityHandler::validate_config(&self.integrity)?;
+
+        // Validate integrity key length for cryptographic algorithms
+        if self.integrity.enabled
+            && self.integrity.algorithm.to_lowercase() == "blake3"
+            && self.integrity.key.len() != 32
+        {
+            return Err(ZthfsError::Config(
+                "Integrity key must be 32 bytes for BLAKE3".to_string(),
+            ));
+        }
 
         Ok(())
     }

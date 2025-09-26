@@ -116,6 +116,7 @@ impl FileSystemOperations {
                 &encrypted_data,
                 &expected_checksum,
                 &fs.config.integrity.algorithm,
+                &fs.config.integrity.key,
             )
         {
             log::warn!("Data integrity check failed for {path:?}");
@@ -182,8 +183,11 @@ impl FileSystemOperations {
         let encrypted_data = fs.encryption.encrypt(data, &path_str)?;
 
         // Compute checksum
-        let checksum =
-            IntegrityHandler::compute_checksum(&encrypted_data, &fs.config.integrity.algorithm);
+        let checksum = IntegrityHandler::compute_checksum(
+            &encrypted_data,
+            &fs.config.integrity.algorithm,
+            &fs.config.integrity.key,
+        );
 
         // Write encrypted data
         fs::write(&real_path, &encrypted_data)?;
@@ -413,6 +417,7 @@ impl FileSystemOperations {
                 &encrypted_data,
                 &expected_checksum,
                 &fs.config.integrity.algorithm,
+                &fs.config.integrity.key,
             )
         {
             log::warn!("Data integrity check failed for chunk {chunk_index} of {path:?}");
@@ -441,8 +446,11 @@ impl FileSystemOperations {
         let encrypted_data = fs.encryption.encrypt(data, &path_str)?;
 
         // Compute checksum
-        let checksum =
-            IntegrityHandler::compute_checksum(&encrypted_data, &fs.config.integrity.algorithm);
+        let checksum = IntegrityHandler::compute_checksum(
+            &encrypted_data,
+            &fs.config.integrity.algorithm,
+            &fs.config.integrity.key,
+        );
 
         // Write encrypted data
         fs::write(&chunk_path, &encrypted_data)?;
