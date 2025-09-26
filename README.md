@@ -856,6 +856,85 @@ sudo chown -R $USER:$USER /data/zthfs
 ls -ld /mnt/medical
 ```
 
+#### 5. systemd Namespace Errors (Error code 226/NAMESPACE)
+
+If you see "226/NAMESPACE" error in systemd logs:
+
+```bash
+# Check systemd service status
+sudo systemctl status zthfs
+journalctl -u zthfs --no-pager -n 10
+
+# Fix: Update systemd service to disable restrictive security settings
+sudo vim /etc/systemd/system/zthfs.service
+
+# Ensure the service runs as root and disables namespace restrictions:
+[Service]
+User=root
+NoNewPrivileges=no
+PrivateTmp=no
+PrivateDevices=no
+ProtectHome=no
+ProtectSystem=no
+ProtectKernelTunables=no
+ProtectKernelModules=no
+ProtectControlGroups=no
+
+# Reload and restart
+sudo systemctl daemon-reload
+sudo systemctl restart zthfs
+```
+
+**Cause**: systemd's security features create isolated namespaces that prevent FUSE from accessing system resources.
+
+#### 6. Access Denied After Mount (Permission Configuration Issues)
+
+If filesystem mounts successfully but access is denied:
+
+```bash
+# Check if filesystem is mounted
+mount | grep zthfs
+
+# Check your user ID and group ID
+id
+
+# Update configuration to include your user/group
+sudo vim /etc/zthfs/config.json
+
+# Add your UID and GID to allowed lists:
+{
+  "security": {
+    "allowed_users": [0, 1000],  // Add your UID
+    "allowed_groups": [0, 1000]  // Add your GID
+  }
+}
+
+# Restart service
+sudo systemctl restart zthfs
+```
+
+**Cause**: ZTHFS implements strict access control. Only users and groups explicitly listed in the configuration can access the filesystem.
+
+#### 7. SELinux or Security Policy Conflicts
+
+If you suspect SELinux or other security policies are interfering:
+
+```bash
+# Check SELinux status
+sestatus
+
+# Check file contexts
+ls -Z /mnt/zthfs/
+
+# Temporarily disable SELinux for testing (not recommended for production)
+sudo setenforce 0
+
+# If SELinux is the issue, create appropriate policy or run in permissive mode
+sudo semodule -i zthfs.pp  # If you have a custom policy
+```
+
+**Cause**: Security policies may prevent FUSE operations or filesystem access even when properly configured.
+
 #### 3. Performance Issues
 
 ```bash

@@ -137,6 +137,35 @@ fi
 log_info "Generating configuration..."
 /usr/local/bin/zthfs init /etc/zthfs/config.json
 
+# Update configuration to include current user's groups for proper access
+log_info "Updating configuration with current user permissions..."
+if [[ -f /etc/zthfs/config.json ]]; then
+    # Get current user's UID and GID
+    CURRENT_UID=$(id -u)
+    CURRENT_GID=$(id -g)
+
+    # Update allowed_users and allowed_groups in config
+    # Add current user and group to allowed lists if not already present
+    python3 -c "
+import json
+import sys
+
+config_file = '/etc/zthfs/config.json'
+with open(config_file, 'r') as f:
+    config = json.load(f)
+
+# Ensure current user and group are in allowed lists
+if 'security' in config:
+    if $CURRENT_UID not in config['security']['allowed_users']:
+        config['security']['allowed_users'].append($CURRENT_UID)
+    if $CURRENT_GID not in config['security']['allowed_groups']:
+        config['security']['allowed_groups'].append($CURRENT_GID)
+
+with open(config_file, 'w') as f:
+    json.dump(config, f, indent=2)
+" 2>/dev/null || log_warn "Could not update configuration automatically. Please manually add your user/group IDs to /etc/zthfs/config.json"
+fi
+
 # Install systemd service
 log_info "Installing systemd service..."
 cat > /etc/systemd/system/zthfs.service << EOF
@@ -155,12 +184,15 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
-# Security settings (running as root for FUSE access)
+# FUSE requires full system access, disable all namespace restrictions
 NoNewPrivileges=no
-PrivateTmp=yes
-ProtectHome=yes
-ProtectSystem=full
-ReadWritePaths=/var/lib/zthfs /var/log/zthfs /mnt/zthfs /etc/zthfs
+PrivateTmp=no
+PrivateDevices=no
+ProtectHome=no
+ProtectSystem=no
+ProtectKernelTunables=no
+ProtectKernelModules=no
+ProtectControlGroups=no
 
 [Install]
 WantedBy=multi-user.target
