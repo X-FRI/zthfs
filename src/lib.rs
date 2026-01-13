@@ -54,6 +54,8 @@ pub mod config;
 pub mod core;
 pub mod errors;
 pub mod fs_impl;
+pub mod key_management;
+pub mod transactions;
 pub mod utils;
 
 // Re-export main types for convenience
@@ -66,6 +68,8 @@ pub use core::integrity::IntegrityHandler;
 pub use core::logging::{AccessLogEntry, LogHandler};
 pub use errors::{ZthfsError, ZthfsResult};
 pub use fs_impl::{Zthfs, operations::FileSystemOperations};
+pub use key_management::{FileKeyStorage, InMemoryKeyStorage, KeyManager, KeyMetadata, KeyStorage, StoredKey, create_file_key_manager};
+pub use transactions::{CowHelper, TransactionId, TransactionOp, TransactionStatus, WalEntry, WriteAheadLog};
 pub mod operations {
     pub use crate::fs_impl::operations::FileSystemOperations;
 }

@@ -46,13 +46,62 @@ impl FileSystemOperations {
     /// Get or assign an inode number for the given path.
     /// Uses sled's atomic ID generation to ensure collision-free inode allocation.
     /// This ensures that the same path always gets the same inode and different paths never conflict.
-    pub fn get_inode(fs: &Zthfs, path: &Path) -> u64 {
-        // Use the new sled-based inode allocation system
-        fs.get_or_create_inode(path).unwrap_or_else(|e| {
-            log::error!("Failed to allocate inode for path {path:?}: {e}");
-            // Fallback to a temporary inode if allocation fails (should not happen in practice)
-            1
-        })
+    ///
+    /// # Errors
+    /// Returns `ZthfsError::Fs` if inode allocation fails after retry attempts.
+    /// This prevents the dangerous fallback to inode 1 (root) which could cause
+    /// file conflicts and security issues.
+    pub fn get_inode(fs: &Zthfs, path: &Path) -> ZthfsResult<u64> {
+        // Use the new sled-based inode allocation system with retry logic
+        Self::get_inode_with_retry(fs, path, 3)
+    }
+
+    /// Get inode with retry logic for transient failures
+    fn get_inode_with_retry(fs: &Zthfs, path: &Path, max_retries: u32) -> ZthfsResult<u64> {
+        let mut last_error = None;
+
+        for attempt in 0..max_retries {
+            match fs.get_or_create_inode(path) {
+                Ok(inode) => return Ok(inode),
+                Err(e) => {
+                    last_error = Some(e);
+
+                    // Check if this is a transient error worth retrying
+                    let is_transient = matches!(
+                        last_error.as_ref().unwrap(),
+                        ZthfsError::Fs(_) | ZthfsError::Io(_)
+                    );
+
+                    if is_transient && attempt < max_retries - 1 {
+                        // Exponential backoff: 10ms, 20ms, 40ms...
+                        let delay_ms = 10 * (1 << attempt);
+                        log::warn!(
+                            "Transient inode allocation failure for {path:?} (attempt {}), retrying in {}ms",
+                            attempt + 1,
+                            delay_ms
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                    }
+                }
+            }
+        }
+
+        // All retries exhausted - return the error instead of falling back to root inode
+        let error = last_error.unwrap();
+        log::error!("Failed to allocate inode for path {path:?} after {max_retries} attempts: {error}");
+
+        // Return the actual error rather than falling back to inode 1 (root)
+        // This prevents the dangerous behavior where multiple files share the same inode
+        Err(ZthfsError::Fs(format!(
+            "Failed to allocate inode for {path:?} after {max_retries} attempts: {error}"
+        )))
+    }
+
+    /// Get inode with a safe fallback that doesn't use root (inode 1).
+    /// This is a legacy compatibility method that should be avoided in new code.
+    /// Returns None if inode allocation fails, allowing callers to handle the error.
+    pub fn get_inode_safe(fs: &Zthfs, path: &Path) -> Option<u64> {
+        Self::get_inode(fs, path).ok()
     }
 
     /// Get the attributes of the specified inode (file or directory). (size, permissions, timestamps, etc.)
@@ -66,7 +115,7 @@ impl FileSystemOperations {
             FileType::RegularFile
         };
 
-        let inode = Self::get_inode(fs, path);
+        let inode = Self::get_inode(fs, path)?;
 
         Ok(FileAttr {
             ino: inode,
@@ -342,10 +391,20 @@ impl FileSystemOperations {
                     FileType::RegularFile
                 };
 
-                let inode = Self::get_inode(fs, &Path::new("/").join(&file_name));
-
-                if reply.add(inode, (i + 1) as i64, file_type, &file_name) {
-                    break;
+                // Get inode, skip entry if allocation fails rather than using root inode
+                let entry_path = Path::new("/").join(&file_name);
+                match Self::get_inode(fs, &entry_path) {
+                    Ok(inode) => {
+                        if reply.add(inode, (i + 1) as i64, file_type, &file_name) {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        // Log error but continue with other entries
+                        log::error!("Failed to get inode for {entry_path:?} in readdir: {e}");
+                        // Skip this entry instead of using inode 1 (root)
+                        continue;
+                    }
                 }
             }
         }
@@ -733,8 +792,8 @@ mod tests {
         let (_temp_dir, fs) = create_test_fs();
 
         let path = Path::new("/test/file.txt");
-        let inode1 = FileSystemOperations::get_inode(&fs, path);
-        let inode2 = FileSystemOperations::get_inode(&fs, path);
+        let inode1 = FileSystemOperations::get_inode(&fs, path).unwrap();
+        let inode2 = FileSystemOperations::get_inode(&fs, path).unwrap();
 
         // Same path should generate the same inode
         assert_eq!(inode1, inode2);
@@ -758,7 +817,7 @@ mod tests {
         let mut inodes = std::collections::HashSet::new();
 
         for path in paths {
-            let inode = FileSystemOperations::get_inode(&fs, Path::new(path));
+            let inode = FileSystemOperations::get_inode(&fs, Path::new(path)).unwrap();
             // Each inode should be unique and > 0
             assert!(inode > 0, "Inode should be greater than 0 for path: {path}");
             assert!(
@@ -769,8 +828,8 @@ mod tests {
 
         // Verify that the same path always gives the same inode
         let test_path = Path::new("/consistency/test.txt");
-        let inode_first = FileSystemOperations::get_inode(&fs, test_path);
-        let inode_second = FileSystemOperations::get_inode(&fs, test_path);
+        let inode_first = FileSystemOperations::get_inode(&fs, test_path).unwrap();
+        let inode_second = FileSystemOperations::get_inode(&fs, test_path).unwrap();
         assert_eq!(inode_first, inode_second);
     }
 
@@ -1389,7 +1448,7 @@ mod tests {
         assert_eq!(attr.nlink, 1);
 
         // Inode should be consistent
-        let inode = FileSystemOperations::get_inode(&fs, file_path);
+        let inode = FileSystemOperations::get_inode(&fs, file_path).unwrap();
         assert_eq!(attr.ino, inode);
 
         // Clean up
@@ -1453,11 +1512,11 @@ mod tests {
         let (_temp_dir, fs) = create_test_fs();
 
         // Root directory must always be inode 1 (FUSE requirement)
-        let root_inode = FileSystemOperations::get_inode(&fs, Path::new("/"));
+        let root_inode = FileSystemOperations::get_inode(&fs, Path::new("/")).unwrap();
         assert_eq!(root_inode, 1, "Root directory must always be inode 1");
 
         // Multiple calls should always return the same inode
-        let root_inode2 = FileSystemOperations::get_inode(&fs, Path::new("/"));
+        let root_inode2 = FileSystemOperations::get_inode(&fs, Path::new("/")).unwrap();
         assert_eq!(root_inode, root_inode2);
     }
 
@@ -1477,7 +1536,7 @@ mod tests {
         // Store path -> inode mappings
         for path_str in &test_paths {
             let path = Path::new(path_str);
-            let inode = FileSystemOperations::get_inode(&fs, path);
+            let inode = FileSystemOperations::get_inode(&fs, path).unwrap();
             path_to_inode.insert(path_str.to_string(), inode);
 
             // Verify we can get path from inode using the memory cache
@@ -1499,7 +1558,7 @@ mod tests {
 
         // Verify the same path always returns the same inode
         for (path_str, expected_inode) in &path_to_inode {
-            let inode = FileSystemOperations::get_inode(&fs, Path::new(path_str));
+            let inode = FileSystemOperations::get_inode(&fs, Path::new(path_str)).unwrap();
             assert_eq!(
                 inode, *expected_inode,
                 "Path {path_str} should always map to inode {expected_inode}"
@@ -1523,7 +1582,7 @@ mod tests {
         let mut allocated_inodes = Vec::new();
 
         for path in paths {
-            let inode = FileSystemOperations::get_inode(&fs, Path::new(path));
+            let inode = FileSystemOperations::get_inode(&fs, Path::new(path)).unwrap();
             allocated_inodes.push(inode);
 
             // Inode should be positive and within reasonable range
@@ -1540,7 +1599,7 @@ mod tests {
         );
 
         // Root inode should be 1
-        let root_inode = FileSystemOperations::get_inode(&fs, Path::new("/"));
+        let root_inode = FileSystemOperations::get_inode(&fs, Path::new("/")).unwrap();
         assert_eq!(root_inode, 1);
 
         // Note: In some cases, sled might allocate inode 1 to other paths if the database is reset
@@ -1555,15 +1614,15 @@ mod tests {
         let test_path = Path::new("/persistence_test.txt");
 
         // Get inode multiple times in different contexts
-        let inode1 = FileSystemOperations::get_inode(&fs, test_path);
+        let inode1 = FileSystemOperations::get_inode(&fs, test_path).unwrap();
 
         // Create the file (this shouldn't change the inode)
         FileSystemOperations::write_file(&fs, test_path, b"test data").unwrap();
-        let inode2 = FileSystemOperations::get_inode(&fs, test_path);
+        let inode2 = FileSystemOperations::get_inode(&fs, test_path).unwrap();
 
         // Read the file (this shouldn't change the inode)
         let _data = FileSystemOperations::read_file(&fs, test_path).unwrap();
-        let inode3 = FileSystemOperations::get_inode(&fs, test_path);
+        let inode3 = FileSystemOperations::get_inode(&fs, test_path).unwrap();
 
         // All inodes should be the same
         assert_eq!(inode1, inode2, "Inode should persist after file creation");
@@ -1575,7 +1634,7 @@ mod tests {
 
         // After deletion, getting inode again should give the same value
         // (since it's stored persistently in sled)
-        let inode4 = FileSystemOperations::get_inode(&fs, test_path);
+        let inode4 = FileSystemOperations::get_inode(&fs, test_path).unwrap();
         assert_eq!(
             inode1, inode4,
             "Inode should persist even after file deletion"

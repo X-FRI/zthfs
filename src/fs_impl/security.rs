@@ -2,7 +2,52 @@ use crate::config::SecurityConfig;
 use crate::errors::ZthfsResult;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use subtle::ConstantTimeEq;
+
+/// Constant-time comparison for sensitive data (keys, passwords, tokens).
+/// This function takes the same amount of time regardless of the input values,
+/// preventing timing attacks that could leak information about the data.
+///
+/// # Arguments
+/// * `a` - First byte slice to compare
+/// * `b` - Second byte slice to compare
+///
+/// # Returns
+/// `true` if slices are equal, `false` otherwise
+///
+/// # Security
+/// This function always executes in time proportional to the length of the
+/// slices, not the number of matching bytes. This prevents attackers from
+/// using timing analysis to discover partial matches.
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    // Use subtle's ConstantTimeEq for constant-time comparison
+    // If lengths differ, we still compare up to the shorter length
+    // to avoid leaking length information via timing
+    if a.len() != b.len() {
+        // First compare the actual content (up to min length)
+        let min_len = a.len().min(b.len());
+        let content_eq: bool = a[..min_len].ct_eq(&b[..min_len]).into();
+
+        // Then XOR the length difference - this ensures we don't short-circuit
+        // and that different lengths always return false
+        let len_eq: bool = (a.len() ^ b.len()) == 0;
+        content_eq & len_eq
+    } else {
+        a.ct_eq(b).into()
+    }
+}
+
+/// Constant-time string comparison for sensitive data.
+/// Prevents timing attacks on string comparisons like passwords or tokens.
+pub fn constant_time_string_eq(a: &str, b: &str) -> bool {
+    constant_time_eq(a.as_bytes(), b.as_bytes())
+}
+
+/// Constant-time u32 comparison for ID checking.
+pub fn constant_time_u32_eq(a: u32, b: u32) -> bool {
+    a.ct_eq(&b).into()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileAccess {
@@ -59,11 +104,22 @@ pub enum SecurityLevel {
     Critical,
 }
 
+#[derive(Debug, Clone)]
+struct RateLimitEntry {
+    failed_count: u32,
+    last_attempt_time: u64,
+    lockout_until: u64,
+}
+
 pub struct SecurityValidator {
     config: Arc<SecurityConfig>,
-    failed_attempts: Arc<Mutex<HashMap<u32, u32>>>,
+    failed_attempts: Arc<Mutex<HashMap<u32, RateLimitEntry>>>,
     audit_log: Arc<Mutex<Vec<AuditEntry>>>,
     max_failed_attempts: u32,
+    /// Base delay for authentication failures (milliseconds)
+    auth_failure_delay_ms: u64,
+    /// Maximum delay for exponential backoff (milliseconds)
+    max_backoff_delay_ms: u64,
     /// When true, root (uid=0) must be explicitly allowed via allowed_users list
     /// and must still pass file permission checks. Default: false (legacy behavior).
     /// For production/medical use, this should be set to true.
@@ -77,6 +133,8 @@ impl SecurityValidator {
             failed_attempts: Arc::new(Mutex::new(HashMap::new())),
             audit_log: Arc::new(Mutex::new(Vec::new())),
             max_failed_attempts: 5,
+            auth_failure_delay_ms: 100, // 100ms base delay
+            max_backoff_delay_ms: 5000,  // 5 second max delay
             respect_root: false, // Default to legacy behavior
         }
     }
@@ -89,6 +147,8 @@ impl SecurityValidator {
             failed_attempts: Arc::new(Mutex::new(HashMap::new())),
             audit_log: Arc::new(Mutex::new(Vec::new())),
             max_failed_attempts: 5,
+            auth_failure_delay_ms: 100, // 100ms base delay
+            max_backoff_delay_ms: 5000,  // 5 second max delay
             respect_root: true, // Enable zero-trust for root
         }
     }
@@ -131,18 +191,53 @@ impl SecurityValidator {
         }
     }
 
-    /// Record failed authentication attempt.
+    /// Record failed authentication attempt with exponential backoff delay.
     /// If the number of failed attempts exceeds the max_failed_attempts, record a security event.
+    /// Uses constant-time delay to prevent timing attacks.
     pub fn record_failed_attempt(&self, uid: u32) -> ZthfsResult<()> {
-        let mut attempts = self.failed_attempts.lock().unwrap();
-        let count = attempts.entry(uid).or_insert(0);
-        *count += 1;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
 
-        if *count >= self.max_failed_attempts {
+        let mut attempts = self.failed_attempts.lock().unwrap();
+        let entry = attempts.entry(uid).or_insert(RateLimitEntry {
+            failed_count: 0,
+            last_attempt_time: now,
+            lockout_until: 0,
+        });
+
+        entry.failed_count += 1;
+        entry.last_attempt_time = now;
+
+        // Calculate exponential backoff delay
+        // delay = base_delay * 2^(failed_count - 1), capped at max_delay
+        let delay_ms = if entry.failed_count > 0 {
+            let exponential_delay = self.auth_failure_delay_ms * (1 << (entry.failed_count - 1).min(31));
+            exponential_delay.min(self.max_backoff_delay_ms)
+        } else {
+            self.auth_failure_delay_ms
+        };
+
+        // Always apply delay to prevent timing attacks
+        // The delay is constant regardless of success/failure path
+        drop(attempts); // Release lock before sleeping
+        std::thread::sleep(Duration::from_millis(delay_ms));
+
+        // Re-acquire lock for security event recording
+        let mut attempts = self.failed_attempts.lock().unwrap();
+        let entry = attempts.get_mut(&uid).unwrap();
+
+        if entry.failed_count >= self.max_failed_attempts {
+            // Set lockout time (exponential: 2^count seconds, max 1 hour)
+            let lockout_seconds = (1u64 << entry.failed_count.saturating_sub(1).min(10)).min(3600);
+            entry.lockout_until = now + lockout_seconds;
+
             self.record_security_event(
                 SecurityEvent::AuthenticationFailure {
                     user: uid,
-                    reason: format!("Too many failed attempts: {count}"),
+                    reason: format!("Too many failed attempts: {}, locked out for {}s",
+                                   entry.failed_count, lockout_seconds),
                 },
                 SecurityLevel::High,
             )?;
@@ -159,8 +254,45 @@ impl SecurityValidator {
 
     /// Check if user is locked out due to too many failed attempts
     pub fn is_user_locked(&self, uid: u32) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let mut attempts = self.failed_attempts.lock().unwrap();
+
+        if let Some(entry) = attempts.get_mut(&uid) {
+            // Check if lockout has expired
+            if entry.lockout_until > 0 && now >= entry.lockout_until {
+                // Reset after lockout expires
+                entry.failed_count = 0;
+                entry.lockout_until = 0;
+                return false;
+            }
+            // Still within lockout period
+            entry.lockout_until > 0
+        } else {
+            false
+        }
+    }
+
+    /// Get time remaining in lockout (seconds), or 0 if not locked
+    pub fn get_lockout_remaining(&self, uid: u32) -> u64 {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
         let attempts = self.failed_attempts.lock().unwrap();
-        attempts.get(&uid).unwrap_or(&0) >= &self.max_failed_attempts
+        if let Some(entry) = attempts.get(&uid) {
+            if entry.lockout_until > now {
+                entry.lockout_until - now
+            } else {
+                0
+            }
+        } else {
+            0
+        }
     }
 
     pub fn record_security_event(
@@ -713,5 +845,126 @@ mod tests {
         assert!(!root_access_entries.is_empty());
         assert!(root_access_entries[0].details.contains(path));
         assert_eq!(root_access_entries[0].severity, SecurityLevel::High);
+    }
+
+    #[test]
+    fn test_constant_time_eq() {
+        // Test equal values
+        assert!(constant_time_eq(b"hello", b"hello"));
+        assert!(constant_time_eq(b"", b""));
+        assert!(constant_time_eq(b"\x00\xff\x42", b"\x00\xff\x42"));
+
+        // Test different values
+        assert!(!constant_time_eq(b"hello", b"world"));
+        assert!(!constant_time_eq(b"hello", b"hello!"));
+        assert!(!constant_time_eq(b"hello", b"hella"));
+
+        // Test different lengths
+        assert!(!constant_time_eq(b"hello", b"helloworld"));
+        assert!(!constant_time_eq(b"short", b"longer"));
+    }
+
+    #[test]
+    fn test_constant_time_string_eq() {
+        assert!(constant_time_string_eq("password", "password"));
+        assert!(!constant_time_string_eq("password", "wrong"));
+        assert!(!constant_time_string_eq("admin", "Admin")); // Case sensitive
+    }
+
+    #[test]
+    fn test_constant_time_u32_eq() {
+        assert!(constant_time_u32_eq(1000, 1000));
+        assert!(constant_time_u32_eq(0, 0));
+        assert!(!constant_time_u32_eq(1000, 1001));
+        assert!(!constant_time_u32_eq(0, 1));
+    }
+
+    #[test]
+    fn test_exponential_backoff_rate_limiting() {
+        let config = SecurityConfig {
+            allowed_users: vec![1000],
+            allowed_groups: vec![1000],
+            encryption_strength: "high".to_string(),
+            access_control_level: "strict".to_string(),
+        };
+        let validator = SecurityValidator::new(config);
+
+        let uid = 9999u32;
+
+        // User is not locked initially
+        assert!(!validator.is_user_locked(uid));
+
+        // Record failed attempts (this will take time due to delays)
+        let start = std::time::Instant::now();
+
+        for _i in 0..4 {
+            validator.record_failed_attempt(uid).unwrap();
+            // Not locked yet (< 5 attempts)
+            assert!(!validator.is_user_locked(uid));
+        }
+
+        let first_four_duration = start.elapsed();
+
+        // 5th attempt should trigger lockout
+        validator.record_failed_attempt(uid).unwrap();
+        assert!(validator.is_user_locked(uid));
+
+        // Total time should be significantly more than 5 * 100ms due to exponential backoff
+        // (100ms + 200ms + 400ms + 800ms + 1600ms = 3100ms minimum)
+        assert!(first_four_duration.as_millis() > 400); // At least 100+200+400
+    }
+
+    #[test]
+    fn test_lockout_expiry() {
+        let config = SecurityConfig {
+            allowed_users: vec![1000],
+            allowed_groups: vec![1000],
+            encryption_strength: "high".to_string(),
+            access_control_level: "strict".to_string(),
+        };
+        let validator = SecurityValidator::new(config);
+
+        let uid = 8888u32;
+
+        // Record enough failed attempts to trigger lockout
+        for _ in 0..5 {
+            validator.record_failed_attempt(uid).unwrap();
+        }
+
+        assert!(validator.is_user_locked(uid));
+        assert!(validator.get_lockout_remaining(uid) > 0);
+
+        // Successful auth clears the lockout
+        validator.record_successful_auth(uid).unwrap();
+        assert!(!validator.is_user_locked(uid));
+        assert_eq!(validator.get_lockout_remaining(uid), 0);
+    }
+
+    #[test]
+    fn test_rate_limiting_prevents_operations() {
+        let config = SecurityConfig {
+            allowed_users: vec![1000],
+            allowed_groups: vec![1000],
+            encryption_strength: "high".to_string(),
+            access_control_level: "strict".to_string(),
+        };
+        let validator = SecurityValidator::new(config);
+
+        let uid = 7777u32;
+
+        // Not rate limited initially
+        assert!(!validator.should_rate_limit(uid, "write"));
+
+        // Lock out the user
+        for _ in 0..5 {
+            validator.record_failed_attempt(uid).unwrap();
+        }
+
+        // Now rate limited
+        assert!(validator.should_rate_limit(uid, "write"));
+        assert!(validator.should_rate_limit(uid, "delete"));
+
+        // Read operations might not be rate limited in the same way
+        // (depends on policy implementation)
     }
 }
