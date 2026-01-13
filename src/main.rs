@@ -263,9 +263,10 @@ fn validate_config(config_path: &str) -> Result<(), Box<dyn std::error::Error>> 
 
     let config = zthfs::config::FilesystemConfig::from_file(config_path)?;
 
+    // First do basic validation
     match config.validate() {
         Ok(_) => {
-            info!("✓ Configuration is valid");
+            info!("✓ Basic configuration is valid");
             info!("Data directory: {}", config.data_dir);
             info!("Mount point: {}", config.mount_point);
             info!(
@@ -287,6 +288,21 @@ fn validate_config(config_path: &str) -> Result<(), Box<dyn std::error::Error>> 
         }
         Err(e) => {
             info!("✗ Configuration is invalid: {e}");
+            return Err(e.to_string().into());
+        }
+    }
+
+    // Then do production validation
+    info!("");
+    info!("Running production safety checks...");
+    match config.validate_with_production_checks() {
+        Ok(_) => {
+            info!("✓ Configuration is safe for production use");
+        }
+        Err(e) => {
+            info!("⚠ Configuration is NOT safe for production: {e}");
+            info!("Please use EncryptionConfig::generate_key() or EncryptionConfig::with_random_keys()");
+            info!("to generate secure keys for production use.");
             return Err(e.to_string().into());
         }
     }

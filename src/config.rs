@@ -43,12 +43,72 @@ impl EncryptionConfig {
         rand::rng().fill_bytes(&mut seed);
         seed
     }
+
+    /// Validate that this configuration is safe for production use.
+    ///
+    /// This checks for known insecure patterns in keys that should never be used
+    /// in production, such as the default placeholder values.
+    ///
+    /// # Errors
+    /// Returns `ZthfsError::Config` if the configuration is unsafe for production.
+    pub fn validate_for_production(&self) -> ZthfsResult<()> {
+        // Check for the default DEADBEEF pattern in key
+        let deadbeef_pattern = [0xDE, 0xAD, 0xBE, 0xEF].repeat(8);
+        if self.key == deadbeef_pattern {
+            return Err(ZthfsError::Config(
+                "Encryption key contains insecure default pattern (DEADBEEF). \
+                 This key must NOT be used in production. \
+                 Generate a secure key using EncryptionConfig::generate_key() \
+                 or EncryptionConfig::with_random_keys().".to_string(),
+            ));
+        }
+
+        // Check for the default BADCOFFE pattern in nonce seed
+        let badcoffe_pattern = [0xBA, 0xDC, 0x0F, 0xFE].repeat(3);
+        if self.nonce_seed == badcoffe_pattern {
+            return Err(ZthfsError::Config(
+                "Nonce seed contains insecure default pattern (BADCOFFE). \
+                 This value must NOT be used in production. \
+                 Generate a secure seed using EncryptionConfig::generate_nonce_seed() \
+                 or EncryptionConfig::with_random_keys().".to_string(),
+            ));
+        }
+
+        // Check for all-zero key
+        if self.key.iter().all(|&b| b == 0) {
+            return Err(ZthfsError::Config(
+                "Encryption key is all zeros. This is insecure and must NOT be used in production.".to_string(),
+            ));
+        }
+
+        // Check for all-ones key
+        if self.key.iter().all(|&b| b == 0xFF) {
+            return Err(ZthfsError::Config(
+                "Encryption key is all 0xFF. This is insecure and must NOT be used in production.".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Check if this configuration uses the insecure default values.
+    pub fn is_insecure_default(&self) -> bool {
+        let deadbeef_pattern = [0xDE, 0xAD, 0xBE, 0xEF].repeat(8);
+        let badcoffe_pattern = [0xBA, 0xDC, 0x0F, 0xFE].repeat(3);
+        self.key == deadbeef_pattern && self.nonce_seed == badcoffe_pattern
+    }
 }
 
 impl Default for EncryptionConfig {
     /// Default configuration with placeholder values.
-    /// WARNING: This default configuration contains insecure placeholder values
-    /// and should NEVER be used in production. Always provide explicit keys.
+    ///
+    /// # WARNING
+    /// This default configuration contains **insecure placeholder values** and
+    /// should **NEVER** be used in production. Always provide explicit keys.
+    ///
+    /// The default values use repeating patterns (DEADBEEF/BADCOFFE) that are
+    /// trivially detectable and provide no real security. Call
+    /// `validate_for_production()` to detect accidental use of these defaults.
     fn default() -> Self {
         // Use clearly insecure placeholder values to prevent accidental use
         // These are obviously not random and will be easily detectable
@@ -268,6 +328,21 @@ impl FilesystemConfig {
             ));
         }
 
+        // Production mode: validate encryption keys are not using default values
+        #[cfg(feature = "production")]
+        self.encryption.validate_for_production()?;
+
+        Ok(())
+    }
+
+    /// Validate configuration with optional production checks.
+    ///
+    /// This is a runtime version of production validation that can be called
+    /// even when the production feature flag is not enabled at compile time.
+    /// It's useful for the `validate` CLI command.
+    pub fn validate_with_production_checks(&self) -> ZthfsResult<()> {
+        self.validate()?;
+        self.encryption.validate_for_production()?;
         Ok(())
     }
 }
@@ -389,5 +464,59 @@ mod tests {
 
         let loaded_config = FilesystemConfig::from_file(&config_path).unwrap();
         assert_eq!(config.data_dir, loaded_config.data_dir);
+    }
+
+    #[test]
+    fn test_validate_for_production_with_defaults() {
+        // Default config should fail production validation
+        let config = EncryptionConfig::default();
+        assert!(config.validate_for_production().is_err());
+        assert!(config.is_insecure_default());
+
+        let err = config.validate_for_production().unwrap_err();
+        assert!(err.to_string().contains("DEADBEEF"));
+    }
+
+    #[test]
+    fn test_validate_for_production_with_zeros() {
+        // All-zero key should fail
+        let config = EncryptionConfig {
+            key: vec![0u8; 32],
+            nonce_seed: vec![1u8; 12],
+        };
+        assert!(config.validate_for_production().is_err());
+        let err = config.validate_for_production().unwrap_err();
+        assert!(err.to_string().contains("all zeros"));
+    }
+
+    #[test]
+    fn test_validate_for_production_with_ones() {
+        // All-ones key should fail
+        let config = EncryptionConfig {
+            key: vec![0xFFu8; 32],
+            nonce_seed: vec![1u8; 12],
+        };
+        assert!(config.validate_for_production().is_err());
+        let err = config.validate_for_production().unwrap_err();
+        assert!(err.to_string().contains("0xFF"));
+    }
+
+    #[test]
+    fn test_validate_for_production_with_random_keys() {
+        // Random keys should pass
+        let config = EncryptionConfig::with_random_keys();
+        assert!(!config.is_insecure_default());
+        assert!(config.validate_for_production().is_ok());
+    }
+
+    #[test]
+    fn test_validate_for_production_with_explicit_keys() {
+        // Explicit secure keys should pass
+        let config = EncryptionConfig {
+            key: EncryptionConfig::generate_key().to_vec(),
+            nonce_seed: EncryptionConfig::generate_nonce_seed().to_vec(),
+        };
+        assert!(!config.is_insecure_default());
+        assert!(config.validate_for_production().is_ok());
     }
 }

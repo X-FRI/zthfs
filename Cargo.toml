@@ -3,6 +3,11 @@ name = "zthfs"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+# Enable production mode with additional security checks
+production = []
+
 [dependencies]
 fuser = "0.16.0"
 aes-gcm = "0.10"

@@ -24,11 +24,17 @@ impl IntegrityHandler {
     }
 
     /// Compute checksum based on algorithm (returns Vec<u8> for variable length)
-    pub fn compute_checksum(data: &[u8], algorithm: &str, key: &[u8]) -> Vec<u8> {
+    ///
+    /// # Errors
+    /// Returns `ZthfsError::Integrity` if the algorithm is not supported.
+    pub fn compute_checksum(data: &[u8], algorithm: &str, key: &[u8]) -> ZthfsResult<Vec<u8>> {
         match algorithm.to_lowercase().as_str() {
-            "crc32c" => Self::compute_crc32c_checksum(data).to_le_bytes().to_vec(),
-            "blake3" => Self::compute_blake3_checksum(data, key),
-            _ => panic!("Unsupported algorithm: {algorithm}"),
+            "crc32c" => Ok(Self::compute_crc32c_checksum(data).to_le_bytes().to_vec()),
+            "blake3" => Ok(Self::compute_blake3_checksum(data, key)),
+            _ => Err(ZthfsError::Integrity(format!(
+                "Unsupported algorithm: {algorithm}. Supported algorithms: {:?}",
+                Self::supported_algorithms()
+            ))),
         }
     }
 
@@ -38,14 +44,17 @@ impl IntegrityHandler {
     }
 
     /// Verify the integrity of the data using the specified algorithm
+    ///
+    /// # Errors
+    /// Returns `ZthfsError::Integrity` if the algorithm is not supported.
     pub fn verify_integrity(
         data: &[u8],
         expected_checksum: &[u8],
         algorithm: &str,
         key: &[u8],
-    ) -> bool {
-        let computed = Self::compute_checksum(data, algorithm, key);
-        computed == expected_checksum
+    ) -> ZthfsResult<bool> {
+        let computed = Self::compute_checksum(data, algorithm, key)?;
+        Ok(computed == expected_checksum)
     }
 
     /// Legacy verification method for CRC32c
@@ -187,11 +196,11 @@ mod tests {
         let key = b"0123456789abcdef0123456789abcdef"; // 32-byte test key
 
         // Test CRC32c
-        let crc32c_checksum = IntegrityHandler::compute_checksum(data, "crc32c", key);
+        let crc32c_checksum = IntegrityHandler::compute_checksum(data, "crc32c", key).unwrap();
         assert_eq!(crc32c_checksum.len(), 4);
 
         // Test BLAKE3
-        let blake3_checksum = IntegrityHandler::compute_checksum(data, "blake3", key);
+        let blake3_checksum = IntegrityHandler::compute_checksum(data, "blake3", key).unwrap();
         assert_eq!(blake3_checksum.len(), 32);
 
         // Both should be non-zero
@@ -205,34 +214,34 @@ mod tests {
         let key = b"0123456789abcdef0123456789abcdef"; // 32-byte test key
 
         // Test CRC32c verification
-        let crc32c_checksum = IntegrityHandler::compute_checksum(data, "crc32c", key);
+        let crc32c_checksum = IntegrityHandler::compute_checksum(data, "crc32c", key).unwrap();
         assert!(IntegrityHandler::verify_integrity(
             data,
             &crc32c_checksum,
             "crc32c",
             key
-        ));
+        ).unwrap());
         assert!(!IntegrityHandler::verify_integrity(
             b"Hello, world",
             &crc32c_checksum,
             "crc32c",
             key
-        ));
+        ).unwrap());
 
         // Test BLAKE3 verification
-        let blake3_checksum = IntegrityHandler::compute_checksum(data, "blake3", key);
+        let blake3_checksum = IntegrityHandler::compute_checksum(data, "blake3", key).unwrap();
         assert!(IntegrityHandler::verify_integrity(
             data,
             &blake3_checksum,
             "blake3",
             key
-        ));
+        ).unwrap());
         assert!(!IntegrityHandler::verify_integrity(
             b"Hello, world",
             &blake3_checksum,
             "blake3",
             key
-        ));
+        ).unwrap());
     }
 
     #[test]
@@ -316,21 +325,21 @@ mod tests {
         let key = b"0123456789abcdef0123456789abcdef"; // 32-byte test key
 
         // Both algorithms should work for basic integrity
-        let crc32c_checksum = IntegrityHandler::compute_checksum(data, "crc32c", key);
-        let blake3_checksum = IntegrityHandler::compute_checksum(data, "blake3", key);
+        let crc32c_checksum = IntegrityHandler::compute_checksum(data, "crc32c", key).unwrap();
+        let blake3_checksum = IntegrityHandler::compute_checksum(data, "blake3", key).unwrap();
 
         assert!(IntegrityHandler::verify_integrity(
             data,
             &crc32c_checksum,
             "crc32c",
             key
-        ));
+        ).unwrap());
         assert!(IntegrityHandler::verify_integrity(
             data,
             &blake3_checksum,
             "blake3",
             key
-        ));
+        ).unwrap());
 
         // But they have different properties
         assert_eq!(crc32c_checksum.len(), 4); // CRC32c is only 4 bytes
@@ -347,8 +356,8 @@ mod tests {
         let data2 = b"Medical record B: Patient has condition Y";
         let key = b"0123456789abcdef0123456789abcdef"; // 32-byte test key
 
-        let checksum1 = IntegrityHandler::compute_checksum(data1, "blake3", key);
-        let checksum2 = IntegrityHandler::compute_checksum(data2, "blake3", key);
+        let checksum1 = IntegrityHandler::compute_checksum(data1, "blake3", key).unwrap();
+        let checksum2 = IntegrityHandler::compute_checksum(data2, "blake3", key).unwrap();
 
         // Different inputs should produce different hashes
         assert_ne!(checksum1, checksum2);
@@ -356,13 +365,13 @@ mod tests {
         // Verify integrity
         assert!(IntegrityHandler::verify_integrity(
             data1, &checksum1, "blake3", key
-        ));
+        ).unwrap());
         assert!(IntegrityHandler::verify_integrity(
             data2, &checksum2, "blake3", key
-        ));
+        ).unwrap());
         assert!(!IntegrityHandler::verify_integrity(
             data1, &checksum2, "blake3", key
-        ));
+        ).unwrap());
     }
 
     #[test]
@@ -371,11 +380,11 @@ mod tests {
         let key = b"0123456789abcdef0123456789abcdef"; // 32-byte test key
 
         // Test CRC32c length
-        let crc32c = IntegrityHandler::compute_checksum(data, "crc32c", key);
+        let crc32c = IntegrityHandler::compute_checksum(data, "crc32c", key).unwrap();
         assert_eq!(crc32c.len(), 4);
 
         // Test BLAKE3 length
-        let blake3 = IntegrityHandler::compute_checksum(data, "blake3", key);
+        let blake3 = IntegrityHandler::compute_checksum(data, "blake3", key).unwrap();
         assert_eq!(blake3.len(), 32);
 
         // Test that lengths are validated
@@ -427,8 +436,8 @@ mod tests {
         ));
 
         // New method with CRC32c should produce same result
-        let new_checksum = IntegrityHandler::compute_checksum(data, "crc32c", key);
-        let new_checksum_u32 = u32::from_le_bytes(new_checksum.try_into().unwrap());
+        let new_checksum = IntegrityHandler::compute_checksum(data, "crc32c", key).unwrap();
+        let new_checksum_u32 = u32::from_le_bytes(new_checksum.as_slice().try_into().unwrap());
         assert_eq!(legacy_checksum, new_checksum_u32);
     }
 
@@ -438,9 +447,9 @@ mod tests {
         let key = b"0123456789abcdef0123456789abcdef"; // 32-byte test key
 
         // Test case insensitivity
-        let checksum1 = IntegrityHandler::compute_checksum(data, "BLAKE3", key);
-        let checksum2 = IntegrityHandler::compute_checksum(data, "blake3", key);
-        let checksum3 = IntegrityHandler::compute_checksum(data, "BlAkE3", key);
+        let checksum1 = IntegrityHandler::compute_checksum(data, "BLAKE3", key).unwrap();
+        let checksum2 = IntegrityHandler::compute_checksum(data, "blake3", key).unwrap();
+        let checksum3 = IntegrityHandler::compute_checksum(data, "BlAkE3", key).unwrap();
 
         assert_eq!(checksum1, checksum2);
         assert_eq!(checksum2, checksum3);
@@ -457,26 +466,26 @@ mod tests {
         let key2 = b"fedcba9876543210fedcba9876543210"; // 32-byte test key 2
 
         // Same data with different keys should produce different MACs
-        let mac1 = IntegrityHandler::compute_checksum(data, "blake3", key1);
-        let mac2 = IntegrityHandler::compute_checksum(data, "blake3", key2);
+        let mac1 = IntegrityHandler::compute_checksum(data, "blake3", key1).unwrap();
+        let mac2 = IntegrityHandler::compute_checksum(data, "blake3", key2).unwrap();
 
         assert_ne!(mac1, mac2);
 
         // Verify each MAC only works with its corresponding key
         assert!(IntegrityHandler::verify_integrity(
             data, &mac1, "blake3", key1
-        ));
+        ).unwrap());
         assert!(IntegrityHandler::verify_integrity(
             data, &mac2, "blake3", key2
-        ));
+        ).unwrap());
 
         // MAC should fail with wrong key
         assert!(!IntegrityHandler::verify_integrity(
             data, &mac1, "blake3", key2
-        ));
+        ).unwrap());
         assert!(!IntegrityHandler::verify_integrity(
             data, &mac2, "blake3", key1
-        ));
+        ).unwrap());
     }
 
     #[test]
@@ -486,7 +495,7 @@ mod tests {
         let key = b"0123456789abcdef0123456789abcdef"; // 32-byte test key
 
         // Compute MAC for original data
-        let original_mac = IntegrityHandler::compute_checksum(original_data, "blake3", key);
+        let original_mac = IntegrityHandler::compute_checksum(original_data, "blake3", key).unwrap();
 
         // Original data should verify
         assert!(IntegrityHandler::verify_integrity(
@@ -494,7 +503,7 @@ mod tests {
             &original_mac,
             "blake3",
             key
-        ));
+        ).unwrap());
 
         // Tampered data should NOT verify with original MAC
         assert!(!IntegrityHandler::verify_integrity(
@@ -502,10 +511,21 @@ mod tests {
             &original_mac,
             "blake3",
             key
-        ));
+        ).unwrap());
 
         // Even if attacker computes a new MAC for tampered data, it won't match the stored MAC
-        let tampered_mac = IntegrityHandler::compute_checksum(tampered_data, "blake3", key);
+        let tampered_mac = IntegrityHandler::compute_checksum(tampered_data, "blake3", key).unwrap();
         assert_ne!(original_mac, tampered_mac);
+    }
+
+    #[test]
+    fn test_unsupported_algorithm_returns_error() {
+        let data = b"Test data";
+        let key = b"0123456789abcdef0123456789abcdef"; // 32-byte test key
+
+        // Unsupported algorithm should return an error instead of panicking
+        let result = IntegrityHandler::compute_checksum(data, "md5", key);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unsupported algorithm"));
     }
 }

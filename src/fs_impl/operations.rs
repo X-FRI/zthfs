@@ -106,12 +106,13 @@ impl FileSystemOperations {
         if let Some(expected_checksum) =
             IntegrityHandler::get_checksum_from_xattr(&real_path, &fs.config.integrity)?
         {
-            if !IntegrityHandler::verify_integrity(
+            let is_valid = IntegrityHandler::verify_integrity(
                 &encrypted_data,
                 &expected_checksum,
                 &fs.config.integrity.algorithm,
                 &fs.config.integrity.key,
-            ) {
+            )?;
+            if !is_valid {
                 log::warn!("Data integrity check failed for {path:?}");
                 return Err(ZthfsError::Integrity(
                     "Data integrity verification failed".to_string(),
@@ -308,7 +309,7 @@ impl FileSystemOperations {
             &encrypted_data,
             &fs.config.integrity.algorithm,
             &fs.config.integrity.key,
-        );
+        )?;
 
         // Write encrypted data
         fs::write(&real_path, &encrypted_data)?;
@@ -535,12 +536,13 @@ impl FileSystemOperations {
         if let Some(expected_checksum) =
             IntegrityHandler::get_checksum_from_xattr(&chunk_path, &fs.config.integrity)?
         {
-            if !IntegrityHandler::verify_integrity(
+            let is_valid = IntegrityHandler::verify_integrity(
                 &encrypted_data,
                 &expected_checksum,
                 &fs.config.integrity.algorithm,
                 &fs.config.integrity.key,
-            ) {
+            )?;
+            if !is_valid {
                 log::warn!("Data integrity check failed for chunk {chunk_index} of {path:?}");
                 return Err(ZthfsError::Integrity(format!(
                     "Data integrity verification failed for chunk {chunk_index}"
@@ -572,7 +574,7 @@ impl FileSystemOperations {
             &encrypted_data,
             &fs.config.integrity.algorithm,
             &fs.config.integrity.key,
-        );
+        )?;
 
         // Write encrypted data
         fs::write(&chunk_path, &encrypted_data)?;

@@ -240,6 +240,7 @@ impl Zthfs {
                 attr.gid,
                 attr.perm as u32,
                 access,
+                None, // TODO: pass actual file path for audit logging
             )
         } else {
             // Fall back to basic permission check if no file attributes available

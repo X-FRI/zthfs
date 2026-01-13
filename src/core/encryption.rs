@@ -31,12 +31,16 @@ impl EncryptionHandler {
     /// ensuring uniqueness and unpredictability. The first 12 bytes of the hash are used as nonce.
     /// To improve performance, the generated nonce is cached, and the same path request will return the cached result directly.
     ///
-    /// Security: This approach provides cryptographic security guarantees that CRC32c-based
+    /// # Errors
+    /// Returns `ZthfsError::Crypto` if hash conversion fails (should never happen with BLAKE3).
+    ///
+    /// # Security
+    /// This approach provides cryptographic security guarantees that CRC32c-based
     /// generation lacks, preventing nonce reuse attacks in AES-GCM.
-    pub fn generate_nonce(&self, path: &str) -> GenericArray<u8, U12> {
+    pub fn generate_nonce(&self, path: &str) -> ZthfsResult<GenericArray<u8, U12>> {
         // Check cache first for performance
         if let Some(nonce) = self.nonce_cache.get(path) {
-            return *nonce;
+            return Ok(*nonce);
         }
 
         // Generate cryptographically secure nonce using BLAKE3
@@ -48,17 +52,19 @@ impl EncryptionHandler {
 
         // Take first 12 bytes of the hash as nonce (BLAKE3 output is 32 bytes)
         let hash_bytes = hash.as_bytes();
-        let nonce_bytes: [u8; 12] = hash_bytes[..12].try_into().unwrap();
+        let nonce_bytes: [u8; 12] = hash_bytes[..12]
+            .try_into()
+            .map_err(|_| ZthfsError::Crypto("Failed to convert hash to nonce".to_string()))?;
         let nonce = GenericArray::from(nonce_bytes);
 
         // Cache nonce for performance
         self.nonce_cache.insert(path.to_string(), nonce);
 
-        nonce
+        Ok(nonce)
     }
 
     pub fn encrypt(&self, data: &[u8], path: &str) -> ZthfsResult<Vec<u8>> {
-        let nonce = self.generate_nonce(path);
+        let nonce = self.generate_nonce(path)?;
         let ciphertext = self
             .cipher
             .encrypt(&nonce, data)
@@ -67,7 +73,7 @@ impl EncryptionHandler {
     }
 
     pub fn decrypt(&self, data: &[u8], path: &str) -> ZthfsResult<Vec<u8>> {
-        let nonce = self.generate_nonce(path);
+        let nonce = self.generate_nonce(path)?;
         let plaintext = self
             .cipher
             .decrypt(&nonce, data)
@@ -117,8 +123,8 @@ mod tests {
         let path1 = "/test/file1.txt";
         let path2 = "/test/file2.txt";
 
-        let nonce1 = encryptor.generate_nonce(path1);
-        let nonce2 = encryptor.generate_nonce(path2);
+        let nonce1 = encryptor.generate_nonce(path1).unwrap();
+        let nonce2 = encryptor.generate_nonce(path2).unwrap();
 
         // Different paths should generate different nonces
         assert_ne!(nonce1, nonce2);
@@ -134,12 +140,12 @@ mod tests {
         let path = "/test/file.txt";
 
         // Same path with same seed should generate same nonce
-        let nonce1a = encryptor1.generate_nonce(path);
-        let nonce1b = encryptor1.generate_nonce(path);
+        let nonce1a = encryptor1.generate_nonce(path).unwrap();
+        let nonce1b = encryptor1.generate_nonce(path).unwrap();
         assert_eq!(nonce1a, nonce1b);
 
         // Same path with different seeds should generate different nonces
-        let nonce2 = encryptor2.generate_nonce(path);
+        let nonce2 = encryptor2.generate_nonce(path).unwrap();
         assert_ne!(nonce1a, nonce2);
 
         // Verify nonce is exactly 12 bytes
@@ -155,8 +161,8 @@ mod tests {
         let path1 = "/test/file1.txt";
         let path2 = "/test/file2.txt"; // Only differs by one character
 
-        let nonce1 = encryptor.generate_nonce(path1);
-        let nonce2 = encryptor.generate_nonce(path2);
+        let nonce1 = encryptor.generate_nonce(path1).unwrap();
+        let nonce2 = encryptor.generate_nonce(path2).unwrap();
 
         // Nonces should be different even for similar inputs
         assert_ne!(nonce1, nonce2);
@@ -179,8 +185,8 @@ mod tests {
 
         let path = "/test/file.txt";
 
-        let nonce1 = encryptor.generate_nonce(path);
-        let nonce2 = encryptor.generate_nonce(path);
+        let nonce1 = encryptor.generate_nonce(path).unwrap();
+        let nonce2 = encryptor.generate_nonce(path).unwrap();
 
         // Same path should generate the same nonce
         assert_eq!(nonce1, nonce2);
