@@ -1050,12 +1050,37 @@ impl Filesystem for Zthfs {
             }
         }
 
-        // Convert TimeOrNow to actual seconds if needed
-        // For simplicity, we'll use None for mtime here since TimeOrNow handling is complex
-        let mtime_secs = None;
+        // Convert TimeOrNow to actual seconds
+        let atime_secs = _atime.map(|time_or_now| match time_or_now {
+            fuser::TimeOrNow::Now => {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+            }
+            fuser::TimeOrNow::SpecificTime(t) => {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+            }
+        });
+
+        let mtime_secs = _mtime.map(|time_or_now| match time_or_now {
+            fuser::TimeOrNow::Now => {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+            }
+            fuser::TimeOrNow::SpecificTime(t) => {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+            }
+        });
 
         match operations::FileSystemOperations::set_file_attributes(
-            self, &path, mode, uid, gid, size, mtime_secs,
+            self, &path, mode, uid, gid, size, atime_secs, mtime_secs,
         ) {
             Ok(()) => {
                 match operations::FileSystemOperations::get_attr(self, &path) {

@@ -1002,7 +1002,7 @@ impl FileSystemOperations {
         Ok(())
     }
 
-    /// Set file attributes (mode, uid, gid, size, mtime)
+    /// Set file attributes (mode, uid, gid, size, atime, mtime)
     pub fn set_file_attributes(
         fs: &Zthfs,
         path: &Path,
@@ -1010,6 +1010,7 @@ impl FileSystemOperations {
         uid: Option<u32>,
         gid: Option<u32>,
         size: Option<u64>,
+        atime: Option<u64>,
         mtime: Option<u64>,
     ) -> ZthfsResult<()> {
         let metadata_path = Self::get_metadata_path(fs, path);
@@ -1035,6 +1036,10 @@ impl FileSystemOperations {
             }
             if let Some(new_gid) = gid {
                 metadata.gid = new_gid;
+                updated = true;
+            }
+            if let Some(new_atime) = atime {
+                metadata.atime = new_atime;
                 updated = true;
             }
             if let Some(new_mtime) = mtime {
@@ -1070,6 +1075,10 @@ impl FileSystemOperations {
             }
             if let Some(new_gid) = gid {
                 metadata.gid = new_gid;
+                updated = true;
+            }
+            if let Some(new_atime) = atime {
+                metadata.atime = new_atime;
                 updated = true;
             }
             if let Some(new_mtime) = mtime {
