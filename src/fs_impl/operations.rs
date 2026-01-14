@@ -936,24 +936,8 @@ impl FileSystemOperations {
                 .map_err(|_| ZthfsError::Fs("Invalid inode data".to_string()))?
         );
 
-        // Atomic batch operation
-        let mut batch = sled::Batch::default();
-
-        // Remove old mappings
-        batch.remove(src_str);
-        batch.remove(&inode_num.to_be_bytes());
-
-        // Add new mappings
-        batch.insert(dst_str, &src_inode);
-        batch.insert(&inode_num.to_be_bytes(), dst_str);
-
-        // Apply atomically
-        fs.inode_db.apply_batch(batch)?;
-
-        // Update in-memory cache
-        fs.inodes.insert(inode_num, dst_path.to_path_buf());
-
-        // Move the actual data on disk
+        // Move the actual data on disk FIRST (before database update)
+        // This ensures that if file operations fail, database stays consistent
         let src_real = Self::virtual_to_real(fs, src_path);
         let dst_real = Self::virtual_to_real(fs, dst_path);
 
@@ -982,6 +966,38 @@ impl FileSystemOperations {
         } else if src_real.exists() {
             fs::rename(&src_real, &dst_real)?;
         }
+
+        // Move chunk files if this is a chunked file
+        let dst_meta_for_chunks = Self::get_metadata_path(fs, dst_path);
+        if dst_meta_for_chunks.exists() {
+            // Load metadata to get chunk count
+            if let Ok(metadata) = Self::load_metadata(fs, dst_path) {
+                for chunk_index in 0..metadata.chunk_count {
+                    let src_chunk = Self::get_chunk_path(fs, src_path, chunk_index);
+                    let dst_chunk = Self::get_chunk_path(fs, dst_path, chunk_index);
+                    if src_chunk.exists() {
+                        fs::rename(&src_chunk, &dst_chunk)?;
+                    }
+                }
+            }
+        }
+
+        // Now that all file operations succeeded, update database atomically
+        let mut batch = sled::Batch::default();
+
+        // Remove old mappings
+        batch.remove(src_str);
+        batch.remove(&inode_num.to_be_bytes());
+
+        // Add new mappings
+        batch.insert(dst_str, &src_inode);
+        batch.insert(&inode_num.to_be_bytes(), dst_str);
+
+        // Apply atomically
+        fs.inode_db.apply_batch(batch)?;
+
+        // Update in-memory cache
+        fs.inodes.insert(inode_num, dst_path.to_path_buf());
 
         Ok(())
     }
