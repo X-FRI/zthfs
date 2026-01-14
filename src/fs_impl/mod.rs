@@ -917,4 +917,84 @@ impl Filesystem for Zthfs {
             }
         }
     }
+
+    fn rename(
+        &mut self,
+        req: &Request,
+        parent: u64,
+        name: &OsStr,
+        newparent: u64,
+        newname: &OsStr,
+        _flags: u32,
+        reply: ReplyEmpty,
+    ) {
+        let uid = req.uid();
+        let gid = req.gid();
+
+        // Get paths
+        let old_path = match self.get_path_for_inode(parent) {
+            Some(path) => path,
+            None => {
+                reply.error(libc::ENOENT);
+                return;
+            }
+        }
+        .join(name);
+
+        let new_path = match self.get_path_for_inode(newparent) {
+            Some(path) => path,
+            None => {
+                reply.error(libc::ENOENT);
+                return;
+            }
+        }
+        .join(newname);
+
+        // Check permission
+        if !self.check_permission(uid, gid) {
+            self.log_access(
+                "rename",
+                &old_path.to_string_lossy(),
+                uid,
+                gid,
+                "permission_denied",
+                Some("User not authorized".to_string()),
+            );
+            reply.error(libc::EACCES);
+            return;
+        }
+
+        match operations::FileSystemOperations::rename_file(self, &old_path, &new_path) {
+            Ok(()) => {
+                self.logger
+                    .log_access(
+                        "rename",
+                        &format!("{} -> {}", old_path.display(), new_path.display()),
+                        uid,
+                        gid,
+                        "success",
+                        None,
+                    )
+                    .unwrap_or(());
+                reply.ok();
+            }
+            Err(ZthfsError::Fs(msg)) if msg.contains("already exists") => {
+                reply.error(libc::EEXIST);
+            }
+            Err(e) => {
+                let error_msg = format!("{e}");
+                self.logger
+                    .log_error(
+                        "rename",
+                        &old_path.to_string_lossy(),
+                        uid,
+                        gid,
+                        &error_msg,
+                        None,
+                    )
+                    .unwrap_or(());
+                reply.error(libc::EIO);
+            }
+        }
+    }
 }

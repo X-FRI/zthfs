@@ -915,6 +915,77 @@ impl FileSystemOperations {
         Ok(())
     }
 
+    /// Atomically rename a file or directory from src_path to dst_path
+    pub fn rename_file(fs: &Zthfs, src_path: &Path, dst_path: &Path) -> ZthfsResult<()> {
+        let src_str_owned = src_path.to_string_lossy();
+        let dst_str_owned = dst_path.to_string_lossy();
+        let src_str = src_str_owned.as_bytes();
+        let dst_str = dst_str_owned.as_bytes();
+
+        // Check source exists
+        let src_inode = fs.inode_db.get(src_str)?
+            .ok_or_else(|| ZthfsError::Fs("Source does not exist".to_string()))?;
+
+        // Check target doesn't exist (unless we're implementing overwrite)
+        if fs.inode_db.contains_key(dst_str)? {
+            return Err(ZthfsError::Fs("Target already exists".to_string()));
+        }
+
+        let inode_num = u64::from_be_bytes(
+            src_inode.as_ref().try_into()
+                .map_err(|_| ZthfsError::Fs("Invalid inode data".to_string()))?
+        );
+
+        // Atomic batch operation
+        let mut batch = sled::Batch::default();
+
+        // Remove old mappings
+        batch.remove(src_str);
+        batch.remove(&inode_num.to_be_bytes());
+
+        // Add new mappings
+        batch.insert(dst_str, &src_inode);
+        batch.insert(&inode_num.to_be_bytes(), dst_str);
+
+        // Apply atomically
+        fs.inode_db.apply_batch(batch)?;
+
+        // Update in-memory cache
+        fs.inodes.insert(inode_num, dst_path.to_path_buf());
+
+        // Move the actual data on disk
+        let src_real = Self::virtual_to_real(fs, src_path);
+        let dst_real = Self::virtual_to_real(fs, dst_path);
+
+        // Ensure target directory exists
+        if let Some(parent) = dst_real.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        // Move metadata file if exists
+        let src_meta = Self::get_metadata_path(fs, src_path);
+        let dst_meta = Self::get_metadata_path(fs, dst_path);
+        if src_meta.exists() {
+            fs::rename(&src_meta, &dst_meta)?;
+        }
+
+        // Move directory marker if exists
+        let src_marker = Self::get_dir_marker_path(fs, src_path);
+        let dst_marker = Self::get_dir_marker_path(fs, dst_path);
+        if src_marker.exists() {
+            fs::rename(&src_marker, &dst_marker)?;
+        }
+
+        // Move actual file or directory
+        if src_real.is_dir() {
+            fs::rename(&src_real, &dst_real)?;
+        } else if src_real.exists() {
+            fs::rename(&src_real, &dst_real)?;
+        }
+
+        Ok(())
+    }
+
     /// Read partial file with chunked support (for FUSE read operations)
     pub fn read_partial_chunked(
         fs: &Zthfs,
