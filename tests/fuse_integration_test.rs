@@ -23,7 +23,7 @@ fn create_test_config(mount_dir: &Path, data_dir: &Path) -> FilesystemConfig {
 }
 
 #[test]
-#[ignore]  // Run with: cargo test --test fuse_integration_test -- --ignored
+#[ignore] // Run with: cargo test --test fuse_integration_test -- --ignored
 fn test_full_mkdir_rmdir_workflow() {
     let mount_dir = TempDir::new().unwrap();
     let data_dir = TempDir::new().unwrap();
@@ -32,13 +32,7 @@ fn test_full_mkdir_rmdir_workflow() {
     let fs = Zthfs::new(&config).unwrap();
 
     // Mount the filesystem
-    let _session = unsafe {
-        fuser::spawn_mount2(
-            fs,
-            mount_dir.path(),
-            &[]
-        )
-    }.expect("Failed to mount");
+    let _session = fuser::spawn_mount2(fs, mount_dir.path(), &[]).expect("Failed to mount");
 
     // Give FUSE time to initialize
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -71,9 +65,7 @@ fn test_rename_workflow() {
     let config = create_test_config(mount_dir.path(), data_dir.path());
     let fs = Zthfs::new(&config).unwrap();
 
-    let _session = unsafe {
-        fuser::spawn_mount2(fs, mount_dir.path(), &[])
-    }.expect("Failed to mount");
+    let _session = fuser::spawn_mount2(fs, mount_dir.path(), &[]).expect("Failed to mount");
 
     std::thread::sleep(std::time::Duration::from_millis(100));
 

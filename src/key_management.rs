@@ -123,12 +123,11 @@ impl FileKeyStorage {
     /// This provides protection against casual access but should be
     /// supplemented with proper filesystem permissions.
     pub fn new(base_dir: String) -> ZthfsResult<Self> {
-        use std::fs;
         use blake3::Hasher;
+        use std::fs;
 
         // Create base directory if it doesn't exist
-        fs::create_dir_all(&base_dir)
-            .map_err(ZthfsError::Io)?;
+        fs::create_dir_all(&base_dir).map_err(ZthfsError::Io)?;
 
         // Derive master key from system-specific sources
         let mut hasher = Hasher::new();
@@ -151,7 +150,10 @@ impl FileKeyStorage {
 
         let master_key = hasher.finalize().as_bytes()[..32].to_vec();
 
-        Ok(Self { base_dir, master_key })
+        Ok(Self {
+            base_dir,
+            master_key,
+        })
     }
 
     /// Get the file path for a key
@@ -185,7 +187,8 @@ impl FileKeyStorage {
         // Use first 12 bytes of derived hash as nonce
         let nonce = Nonce::from_slice(derived_key.as_bytes()[..12].try_into().unwrap());
 
-        cipher.encrypt(nonce, data.as_slice())
+        cipher
+            .encrypt(nonce, data.as_slice())
             .map_err(|e| ZthfsError::Crypto(format!("Failed to encrypt key: {e:?}")))
     }
 
@@ -205,7 +208,8 @@ impl FileKeyStorage {
 
         let nonce = Nonce::from_slice(derived_key.as_bytes()[..12].try_into().unwrap());
 
-        let plaintext = cipher.decrypt(nonce, ciphertext)
+        let plaintext = cipher
+            .decrypt(nonce, ciphertext)
             .map_err(|e| ZthfsError::Crypto(format!("Failed to decrypt key: {e:?}")))?;
 
         if plaintext.len() < 44 {
@@ -218,7 +222,11 @@ impl FileKeyStorage {
         let metadata: KeyMetadata = serde_json::from_str(&metadata_json)
             .map_err(|e| ZthfsError::Config(format!("Failed to deserialize metadata: {e}")))?;
 
-        Ok(StoredKey { metadata, key, nonce_seed })
+        Ok(StoredKey {
+            metadata,
+            key,
+            nonce_seed,
+        })
     }
 }
 
@@ -229,8 +237,7 @@ impl KeyStorage for FileKeyStorage {
         let encrypted = self.encrypt_key(key)?;
         let path = self.key_path(&key.metadata.key_id);
 
-        fs::write(&path, encrypted)
-            .map_err(ZthfsError::Io)?;
+        fs::write(&path, encrypted).map_err(ZthfsError::Io)?;
 
         Ok(())
     }
@@ -239,8 +246,7 @@ impl KeyStorage for FileKeyStorage {
         use std::fs;
 
         let path = self.key_path(key_id);
-        let encrypted = fs::read(&path)
-            .map_err(ZthfsError::Io)?;
+        let encrypted = fs::read(&path).map_err(ZthfsError::Io)?;
 
         self.decrypt_key(key_id, &encrypted)
     }
@@ -249,13 +255,11 @@ impl KeyStorage for FileKeyStorage {
         use std::fs;
 
         let mut keys = Vec::new();
-        for entry in fs::read_dir(&self.base_dir)
-            .map_err(ZthfsError::Io)?
-        {
+        for entry in fs::read_dir(&self.base_dir).map_err(ZthfsError::Io)? {
             let entry = entry.map_err(ZthfsError::Io)?;
             if let Some(name) = entry.file_name().to_str() {
-                if name.ends_with(".key") {
-                    keys.push(name[..name.len() - 4].to_string());
+                if let Some(key_name) = name.strip_suffix(".key") {
+                    keys.push(key_name.to_string());
                 }
             }
         }
@@ -266,8 +270,7 @@ impl KeyStorage for FileKeyStorage {
         use std::fs;
 
         let path = self.key_path(key_id);
-        fs::remove_file(&path)
-            .map_err(ZthfsError::Io)?;
+        fs::remove_file(&path).map_err(ZthfsError::Io)?;
 
         Ok(())
     }
@@ -336,7 +339,11 @@ impl<S: KeyStorage> KeyManager<S> {
             description,
         };
 
-        let stored_key = StoredKey { metadata, key, nonce_seed };
+        let stored_key = StoredKey {
+            metadata,
+            key,
+            nonce_seed,
+        };
         self.store_key(&stored_key)?;
 
         Ok(stored_key)
@@ -369,7 +376,11 @@ impl<S: KeyStorage> KeyManager<S> {
             description: existing_key.metadata.description.clone(),
         };
 
-        let stored_key = StoredKey { metadata, key, nonce_seed };
+        let stored_key = StoredKey {
+            metadata,
+            key,
+            nonce_seed,
+        };
         self.store_key(&stored_key)?;
 
         Ok(stored_key)
@@ -423,7 +434,10 @@ impl<S: KeyStorage> KeyManager<S> {
 }
 
 /// Convenience function to create a key manager with file storage
-pub fn create_file_key_manager(base_dir: &str, default_key_id: &str) -> ZthfsResult<KeyManager<FileKeyStorage>> {
+pub fn create_file_key_manager(
+    base_dir: &str,
+    default_key_id: &str,
+) -> ZthfsResult<KeyManager<FileKeyStorage>> {
     let storage = FileKeyStorage::new(base_dir.to_string())?;
     Ok(KeyManager::new(storage, default_key_id.to_string()))
 }
@@ -476,11 +490,9 @@ mod tests {
         let manager = KeyManager::new(storage, "default".to_string());
 
         // Generate a new key
-        let key = manager.generate_key(
-            "test-key".to_string(),
-            Some("Test key".to_string()),
-            None,
-        ).unwrap();
+        let key = manager
+            .generate_key("test-key".to_string(), Some("Test key".to_string()), None)
+            .unwrap();
 
         assert_eq!(key.metadata.key_id, "test-key");
         assert_eq!(key.metadata.version, 1);
@@ -499,11 +511,9 @@ mod tests {
         let manager = KeyManager::new(storage, "default".to_string());
 
         // Generate initial key
-        let key1 = manager.generate_key(
-            "rotating-key".to_string(),
-            None,
-            None,
-        ).unwrap();
+        let key1 = manager
+            .generate_key("rotating-key".to_string(), None, None)
+            .unwrap();
         assert_eq!(key1.metadata.version, 1);
 
         // Rotate the key
@@ -525,11 +535,9 @@ mod tests {
         let storage = InMemoryKeyStorage::new();
         let manager = KeyManager::new(storage, "default".to_string());
 
-        let key = manager.generate_key(
-            "config-test".to_string(),
-            None,
-            None,
-        ).unwrap();
+        let key = manager
+            .generate_key("config-test".to_string(), None, None)
+            .unwrap();
 
         let config = manager.encryption_config_from_key("config-test").unwrap();
         assert_eq!(config.key, key.key);
@@ -541,7 +549,9 @@ mod tests {
         let storage = InMemoryKeyStorage::new();
         let manager = KeyManager::new(storage, "default".to_string());
 
-        manager.generate_key("default".to_string(), None, None).unwrap();
+        manager
+            .generate_key("default".to_string(), None, None)
+            .unwrap();
 
         let result = manager.delete_key("default");
         assert!(result.is_err());

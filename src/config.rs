@@ -59,7 +59,8 @@ impl EncryptionConfig {
                 "Encryption key contains insecure default pattern (DEADBEEF). \
                  This key must NOT be used in production. \
                  Generate a secure key using EncryptionConfig::generate_key() \
-                 or EncryptionConfig::with_random_keys().".to_string(),
+                 or EncryptionConfig::with_random_keys()."
+                    .to_string(),
             ));
         }
 
@@ -70,21 +71,24 @@ impl EncryptionConfig {
                 "Nonce seed contains insecure default pattern (BADCOFFE). \
                  This value must NOT be used in production. \
                  Generate a secure seed using EncryptionConfig::generate_nonce_seed() \
-                 or EncryptionConfig::with_random_keys().".to_string(),
+                 or EncryptionConfig::with_random_keys()."
+                    .to_string(),
             ));
         }
 
         // Check for all-zero key
         if self.key.iter().all(|&b| b == 0) {
             return Err(ZthfsError::Config(
-                "Encryption key is all zeros. This is insecure and must NOT be used in production.".to_string(),
+                "Encryption key is all zeros. This is insecure and must NOT be used in production."
+                    .to_string(),
             ));
         }
 
         // Check for all-ones key
         if self.key.iter().all(|&b| b == 0xFF) {
             return Err(ZthfsError::Config(
-                "Encryption key is all 0xFF. This is insecure and must NOT be used in production.".to_string(),
+                "Encryption key is all 0xFF. This is insecure and must NOT be used in production."
+                    .to_string(),
             ));
         }
 

@@ -774,7 +774,15 @@ impl Filesystem for Zthfs {
         }
     }
 
-    fn mkdir(&mut self, _req: &Request, _parent: u64, name: &OsStr, mode: u32, _umask: u32, reply: ReplyEntry) {
+    fn mkdir(
+        &mut self,
+        _req: &Request,
+        _parent: u64,
+        name: &OsStr,
+        mode: u32,
+        _umask: u32,
+        reply: ReplyEntry,
+    ) {
         let uid = _req.uid();
         let gid = _req.gid();
 
@@ -829,18 +837,15 @@ impl Filesystem for Zthfs {
             Err(e) => {
                 let error_msg = format!("{e}");
                 self.logger
-                    .log_error(
-                        "mkdir",
-                        &path.to_string_lossy(),
-                        uid,
-                        gid,
-                        &error_msg,
-                        None,
-                    )
+                    .log_error("mkdir", &path.to_string_lossy(), uid, gid, &error_msg, None)
                     .unwrap_or(());
                 // Return appropriate POSIX error code
                 let error_code = match &e {
-                    ZthfsError::Io(io_err) if io_err.kind() == std::io::ErrorKind::AlreadyExists => libc::EEXIST,
+                    ZthfsError::Io(io_err)
+                        if io_err.kind() == std::io::ErrorKind::AlreadyExists =>
+                    {
+                        libc::EEXIST
+                    }
                     _ => libc::EIO,
                 };
                 reply.error(error_code);
@@ -904,14 +909,7 @@ impl Filesystem for Zthfs {
             Err(e) => {
                 let error_msg = format!("{e}");
                 self.logger
-                    .log_error(
-                        "rmdir",
-                        &path.to_string_lossy(),
-                        uid,
-                        gid,
-                        &error_msg,
-                        None,
-                    )
+                    .log_error("rmdir", &path.to_string_lossy(), uid, gid, &error_msg, None)
                     .unwrap_or(());
                 reply.error(libc::EIO);
             }
@@ -1052,46 +1050,43 @@ impl Filesystem for Zthfs {
 
         // Convert TimeOrNow to actual seconds
         let atime_secs = _atime.map(|time_or_now| match time_or_now {
-            fuser::TimeOrNow::Now => {
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
-            }
+            fuser::TimeOrNow::Now => std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
             fuser::TimeOrNow::SpecificTime(t) => {
-                t.duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
+                t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
             }
         });
 
         let mtime_secs = _mtime.map(|time_or_now| match time_or_now {
-            fuser::TimeOrNow::Now => {
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
-            }
+            fuser::TimeOrNow::Now => std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
             fuser::TimeOrNow::SpecificTime(t) => {
-                t.duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
+                t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
             }
         });
 
         match operations::FileSystemOperations::set_file_attributes(
             self, &path, mode, uid, gid, size, atime_secs, mtime_secs,
         ) {
-            Ok(()) => {
-                match operations::FileSystemOperations::get_attr(self, &path) {
-                    Ok(attr) => reply.attr(&TTL, &attr),
-                    Err(_) => reply.error(libc::EIO),
-                }
-            }
+            Ok(()) => match operations::FileSystemOperations::get_attr(self, &path) {
+                Ok(attr) => reply.attr(&TTL, &attr),
+                Err(_) => reply.error(libc::EIO),
+            },
             Err(e) => {
                 let error_msg = format!("{e}");
                 self.logger
-                    .log_error("setattr", &path.to_string_lossy(), caller_uid, caller_gid, &error_msg, None)
+                    .log_error(
+                        "setattr",
+                        &path.to_string_lossy(),
+                        caller_uid,
+                        caller_gid,
+                        &error_msg,
+                        None,
+                    )
                     .unwrap_or(());
                 reply.error(libc::EIO);
             }
@@ -1123,15 +1118,28 @@ impl Filesystem for Zthfs {
         let write_required = (flags & libc::O_ACCMODE) != libc::O_RDONLY;
 
         if read_required && !self.check_file_access(uid, gid, FileAccess::Read, Some(&file_attr)) {
-            self.log_access("open", &path.to_string_lossy(), uid, gid,
-                "permission_denied", Some("Read access denied".to_string()));
+            self.log_access(
+                "open",
+                &path.to_string_lossy(),
+                uid,
+                gid,
+                "permission_denied",
+                Some("Read access denied".to_string()),
+            );
             reply.error(libc::EACCES);
             return;
         }
 
-        if write_required && !self.check_file_access(uid, gid, FileAccess::Write, Some(&file_attr)) {
-            self.log_access("open", &path.to_string_lossy(), uid, gid,
-                "permission_denied", Some("Write access denied".to_string()));
+        if write_required && !self.check_file_access(uid, gid, FileAccess::Write, Some(&file_attr))
+        {
+            self.log_access(
+                "open",
+                &path.to_string_lossy(),
+                uid,
+                gid,
+                "permission_denied",
+                Some("Write access denied".to_string()),
+            );
             reply.error(libc::EACCES);
             return;
         }
@@ -1139,18 +1147,37 @@ impl Filesystem for Zthfs {
         // Handle O_TRUNC
         if (flags & libc::O_TRUNC) != 0 && write_required {
             if let Err(e) = operations::FileSystemOperations::truncate_file(self, &path, 0) {
-                self.logger.log_error("open", &path.to_string_lossy(), uid, gid, &format!("{e}"), None).unwrap_or(());
+                self.logger
+                    .log_error(
+                        "open",
+                        &path.to_string_lossy(),
+                        uid,
+                        gid,
+                        &format!("{e}"),
+                        None,
+                    )
+                    .unwrap_or(());
                 reply.error(libc::EIO);
                 return;
             }
         }
 
-        self.logger.log_access("open", &path.to_string_lossy(), uid, gid, "success", None).unwrap_or(());
+        self.logger
+            .log_access("open", &path.to_string_lossy(), uid, gid, "success", None)
+            .unwrap_or(());
         reply.opened(0, fuser::consts::FOPEN_KEEP_CACHE);
     }
 
-    fn release(&mut self, req: &Request, ino: u64, _fh: u64, _flags: i32,
-               _lock_owner: Option<u64>, _flush: bool, reply: ReplyEmpty) {
+    fn release(
+        &mut self,
+        req: &Request,
+        ino: u64,
+        _fh: u64,
+        _flags: i32,
+        _lock_owner: Option<u64>,
+        _flush: bool,
+        reply: ReplyEmpty,
+    ) {
         let uid = req.uid();
         let gid = req.gid();
 
@@ -1162,7 +1189,16 @@ impl Filesystem for Zthfs {
             }
         };
 
-        self.logger.log_access("release", &path.to_string_lossy(), uid, gid, "success", None).unwrap_or(());
+        self.logger
+            .log_access(
+                "release",
+                &path.to_string_lossy(),
+                uid,
+                gid,
+                "success",
+                None,
+            )
+            .unwrap_or(());
         reply.ok();
     }
 
@@ -1188,11 +1224,22 @@ impl Filesystem for Zthfs {
 
         match result {
             Ok(()) => {
-                self.logger.log_access("fsync", &path.to_string_lossy(), uid, gid, "success", None).unwrap_or(());
+                self.logger
+                    .log_access("fsync", &path.to_string_lossy(), uid, gid, "success", None)
+                    .unwrap_or(());
                 reply.ok();
             }
             Err(e) => {
-                self.logger.log_error("fsync", &path.to_string_lossy(), uid, gid, &format!("{e}"), None).unwrap_or(());
+                self.logger
+                    .log_error(
+                        "fsync",
+                        &path.to_string_lossy(),
+                        uid,
+                        gid,
+                        &format!("{e}"),
+                        None,
+                    )
+                    .unwrap_or(());
                 reply.error(libc::EIO);
             }
         }

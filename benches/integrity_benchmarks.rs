@@ -11,7 +11,8 @@ fn bench_checksum_computation_1kb(c: &mut Criterion) {
                 std::hint::black_box(&data),
                 std::hint::black_box("blake3"),
                 std::hint::black_box(&key),
-            ).unwrap();
+            )
+            .unwrap();
         })
     });
 }
@@ -26,7 +27,8 @@ fn bench_checksum_computation_1mb(c: &mut Criterion) {
                 std::hint::black_box(&data),
                 std::hint::black_box("blake3"),
                 std::hint::black_box(&key),
-            ).unwrap();
+            )
+            .unwrap();
         })
     });
 }
@@ -43,7 +45,8 @@ fn bench_integrity_verification_1kb(c: &mut Criterion) {
                 std::hint::black_box(&checksum),
                 std::hint::black_box("blake3"),
                 std::hint::black_box(&key),
-            ).unwrap();
+            )
+            .unwrap();
         })
     });
 }
@@ -60,7 +63,8 @@ fn bench_integrity_verification_1mb(c: &mut Criterion) {
                 std::hint::black_box(&checksum),
                 std::hint::black_box("blake3"),
                 std::hint::black_box(&key),
-            ).unwrap();
+            )
+            .unwrap();
         })
     });
 }

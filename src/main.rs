@@ -301,7 +301,9 @@ fn validate_config(config_path: &str) -> Result<(), Box<dyn std::error::Error>> 
         }
         Err(e) => {
             info!("⚠ Configuration is NOT safe for production: {e}");
-            info!("Please use EncryptionConfig::generate_key() or EncryptionConfig::with_random_keys()");
+            info!(
+                "Please use EncryptionConfig::generate_key() or EncryptionConfig::with_random_keys()"
+            );
             info!("to generate secure keys for production use.");
             return Err(e.to_string().into());
         }

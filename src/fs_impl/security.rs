@@ -134,8 +134,8 @@ impl SecurityValidator {
             audit_log: Arc::new(Mutex::new(Vec::new())),
             max_failed_attempts: 5,
             auth_failure_delay_ms: 100, // 100ms base delay
-            max_backoff_delay_ms: 5000,  // 5 second max delay
-            respect_root: false, // Default to legacy behavior
+            max_backoff_delay_ms: 5000, // 5 second max delay
+            respect_root: false,        // Default to legacy behavior
         }
     }
 
@@ -148,8 +148,8 @@ impl SecurityValidator {
             audit_log: Arc::new(Mutex::new(Vec::new())),
             max_failed_attempts: 5,
             auth_failure_delay_ms: 100, // 100ms base delay
-            max_backoff_delay_ms: 5000,  // 5 second max delay
-            respect_root: true, // Enable zero-trust for root
+            max_backoff_delay_ms: 5000, // 5 second max delay
+            respect_root: true,         // Enable zero-trust for root
         }
     }
 
@@ -213,7 +213,8 @@ impl SecurityValidator {
         // Calculate exponential backoff delay
         // delay = base_delay * 2^(failed_count - 1), capped at max_delay
         let delay_ms = if entry.failed_count > 0 {
-            let exponential_delay = self.auth_failure_delay_ms * (1 << (entry.failed_count - 1).min(31));
+            let exponential_delay =
+                self.auth_failure_delay_ms * (1 << (entry.failed_count - 1).min(31));
             exponential_delay.min(self.max_backoff_delay_ms)
         } else {
             self.auth_failure_delay_ms
@@ -236,8 +237,10 @@ impl SecurityValidator {
             self.record_security_event(
                 SecurityEvent::AuthenticationFailure {
                     user: uid,
-                    reason: format!("Too many failed attempts: {}, locked out for {}s",
-                                   entry.failed_count, lockout_seconds),
+                    reason: format!(
+                        "Too many failed attempts: {}, locked out for {}s",
+                        entry.failed_count, lockout_seconds
+                    ),
                 },
                 SecurityLevel::High,
             )?;
@@ -387,6 +390,7 @@ impl SecurityValidator {
     /// * `file_mode` - The file permission mode (e.g., 0o644)
     /// * `requested_access` - The type of access being requested
     /// * `file_path` - Optional path for audit logging
+    #[allow(clippy::too_many_arguments)]
     pub fn check_file_permission(
         &self,
         user_uid: u32,
@@ -460,7 +464,15 @@ impl SecurityValidator {
         file_mode: u32,
         requested_access: FileAccess,
     ) -> bool {
-        self.check_file_permission(user_uid, user_gid, file_uid, file_gid, file_mode, requested_access, None)
+        self.check_file_permission(
+            user_uid,
+            user_gid,
+            file_uid,
+            file_gid,
+            file_mode,
+            requested_access,
+            None,
+        )
     }
 
     /// Validate file path for security
@@ -513,9 +525,30 @@ mod tests {
 
         // Test read access with different file modes
         // User 1000 owns the file (uid=1000, gid=1000)
-        assert!(validator.check_file_permission_legacy(1000, 1000, 1000, 1000, 0o644, FileAccess::Read)); // rw-r--r--
-        assert!(validator.check_file_permission_legacy(1000, 1000, 1000, 1000, 0o600, FileAccess::Read)); // rw-------
-        assert!(!validator.check_file_permission_legacy(1000, 1000, 1000, 1000, 0o244, FileAccess::Read)); // -w-r--r--
+        assert!(validator.check_file_permission_legacy(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o644,
+            FileAccess::Read
+        )); // rw-r--r--
+        assert!(validator.check_file_permission_legacy(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o600,
+            FileAccess::Read
+        )); // rw-------
+        assert!(!validator.check_file_permission_legacy(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o244,
+            FileAccess::Read
+        )); // -w-r--r--
     }
 
     #[test]
@@ -524,9 +557,30 @@ mod tests {
 
         // Test write access with different file modes
         // User 1000 owns the file (uid=1000, gid=1000)
-        assert!(validator.check_file_permission_legacy(1000, 1000, 1000, 1000, 0o644, FileAccess::Write)); // rw-r--r--
-        assert!(validator.check_file_permission_legacy(1000, 1000, 1000, 1000, 0o622, FileAccess::Write)); // rw--w--w-
-        assert!(!validator.check_file_permission_legacy(1000, 1000, 1000, 1000, 0o444, FileAccess::Write)); // r--r--r--
+        assert!(validator.check_file_permission_legacy(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o644,
+            FileAccess::Write
+        )); // rw-r--r--
+        assert!(validator.check_file_permission_legacy(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o622,
+            FileAccess::Write
+        )); // rw--w--w-
+        assert!(!validator.check_file_permission_legacy(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o444,
+            FileAccess::Write
+        )); // r--r--r--
     }
 
     #[test]
@@ -561,7 +615,14 @@ mod tests {
         // File owned by user 1000, group 1000, but root gets access anyway
         assert!(validator.check_file_permission_legacy(0, 0, 1000, 1000, 0o000, FileAccess::Read));
         assert!(validator.check_file_permission_legacy(0, 0, 1000, 1000, 0o000, FileAccess::Write));
-        assert!(validator.check_file_permission_legacy(0, 0, 1000, 1000, 0o000, FileAccess::Execute));
+        assert!(validator.check_file_permission_legacy(
+            0,
+            0,
+            1000,
+            1000,
+            0o000,
+            FileAccess::Execute
+        ));
     }
 
     #[test]
@@ -570,8 +631,22 @@ mod tests {
 
         // User 2000 is not in allowed_users or allowed_groups
         // File owned by user 1000, group 1000 with full permissions
-        assert!(!validator.check_file_permission_legacy(2000, 2000, 1000, 1000, 0o777, FileAccess::Read));
-        assert!(!validator.check_file_permission_legacy(2000, 2000, 1000, 1000, 0o777, FileAccess::Write));
+        assert!(!validator.check_file_permission_legacy(
+            2000,
+            2000,
+            1000,
+            1000,
+            0o777,
+            FileAccess::Read
+        ));
+        assert!(!validator.check_file_permission_legacy(
+            2000,
+            2000,
+            1000,
+            1000,
+            0o777,
+            FileAccess::Write
+        ));
     }
 
     #[test]
@@ -586,8 +661,22 @@ mod tests {
         let validator = SecurityValidator::new(config);
 
         // Test owner permissions (user 1000 owns file)
-        assert!(validator.check_file_permission_legacy(1000, 1000, 1000, 1000, 0o700, FileAccess::Read)); // rwx------
-        assert!(validator.check_file_permission_legacy(1000, 1000, 1000, 1000, 0o700, FileAccess::Write));
+        assert!(validator.check_file_permission_legacy(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o700,
+            FileAccess::Read
+        )); // rwx------
+        assert!(validator.check_file_permission_legacy(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o700,
+            FileAccess::Write
+        ));
         assert!(validator.check_file_permission_legacy(
             1000,
             1000,
@@ -598,8 +687,22 @@ mod tests {
         ));
 
         // Test group permissions (user 1001 in group 1000, file owned by 1000:1000)
-        assert!(validator.check_file_permission_legacy(1001, 1000, 1000, 1000, 0o070, FileAccess::Read)); // ---rwx---
-        assert!(validator.check_file_permission_legacy(1001, 1000, 1000, 1000, 0o070, FileAccess::Write));
+        assert!(validator.check_file_permission_legacy(
+            1001,
+            1000,
+            1000,
+            1000,
+            0o070,
+            FileAccess::Read
+        )); // ---rwx---
+        assert!(validator.check_file_permission_legacy(
+            1001,
+            1000,
+            1000,
+            1000,
+            0o070,
+            FileAccess::Write
+        ));
         assert!(validator.check_file_permission_legacy(
             1001,
             1000,
@@ -610,8 +713,22 @@ mod tests {
         ));
 
         // Test other permissions (user 2000 not owner/group, file owned by 1000:1000)
-        assert!(validator.check_file_permission_legacy(2000, 2000, 1000, 1000, 0o007, FileAccess::Read)); // ------rwx
-        assert!(validator.check_file_permission_legacy(2000, 2000, 1000, 1000, 0o007, FileAccess::Write));
+        assert!(validator.check_file_permission_legacy(
+            2000,
+            2000,
+            1000,
+            1000,
+            0o007,
+            FileAccess::Read
+        )); // ------rwx
+        assert!(validator.check_file_permission_legacy(
+            2000,
+            2000,
+            1000,
+            1000,
+            0o007,
+            FileAccess::Write
+        ));
         assert!(validator.check_file_permission_legacy(
             2000,
             2000,
@@ -622,8 +739,22 @@ mod tests {
         ));
 
         // Test mixed permissions: owner can read/write, group can read, others can do nothing
-        assert!(validator.check_file_permission_legacy(1000, 1000, 1000, 1000, 0o640, FileAccess::Read)); // rw-r-----
-        assert!(validator.check_file_permission_legacy(1000, 1000, 1000, 1000, 0o640, FileAccess::Write));
+        assert!(validator.check_file_permission_legacy(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o640,
+            FileAccess::Read
+        )); // rw-r-----
+        assert!(validator.check_file_permission_legacy(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o640,
+            FileAccess::Write
+        ));
         assert!(!validator.check_file_permission_legacy(
             1000,
             1000,
@@ -633,8 +764,22 @@ mod tests {
             FileAccess::Execute
         ));
 
-        assert!(validator.check_file_permission_legacy(1001, 1000, 1000, 1000, 0o640, FileAccess::Read)); // Group can read
-        assert!(!validator.check_file_permission_legacy(1001, 1000, 1000, 1000, 0o640, FileAccess::Write)); // Group cannot write
+        assert!(validator.check_file_permission_legacy(
+            1001,
+            1000,
+            1000,
+            1000,
+            0o640,
+            FileAccess::Read
+        )); // Group can read
+        assert!(!validator.check_file_permission_legacy(
+            1001,
+            1000,
+            1000,
+            1000,
+            0o640,
+            FileAccess::Write
+        )); // Group cannot write
         assert!(!validator.check_file_permission_legacy(
             1001,
             1000,
@@ -644,8 +789,22 @@ mod tests {
             FileAccess::Execute
         ));
 
-        assert!(!validator.check_file_permission_legacy(2000, 2000, 1000, 1000, 0o640, FileAccess::Read)); // Others cannot read
-        assert!(!validator.check_file_permission_legacy(2000, 2000, 1000, 1000, 0o640, FileAccess::Write));
+        assert!(!validator.check_file_permission_legacy(
+            2000,
+            2000,
+            1000,
+            1000,
+            0o640,
+            FileAccess::Read
+        )); // Others cannot read
+        assert!(!validator.check_file_permission_legacy(
+            2000,
+            2000,
+            1000,
+            1000,
+            0o640,
+            FileAccess::Write
+        ));
         assert!(!validator.check_file_permission_legacy(
             2000,
             2000,
@@ -668,8 +827,22 @@ mod tests {
         let validator = SecurityValidator::new(config);
 
         // User is owner - should use owner permissions regardless of group membership
-        assert!(validator.check_file_permission_legacy(1000, 1000, 1000, 1000, 0o744, FileAccess::Read)); // rwxr--r--
-        assert!(validator.check_file_permission_legacy(1000, 1000, 1000, 1000, 0o744, FileAccess::Write));
+        assert!(validator.check_file_permission_legacy(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o744,
+            FileAccess::Read
+        )); // rwxr--r--
+        assert!(validator.check_file_permission_legacy(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o744,
+            FileAccess::Write
+        ));
         assert!(validator.check_file_permission_legacy(
             1000,
             1000,
@@ -680,8 +853,22 @@ mod tests {
         ));
 
         // User is in group but not owner - should use group permissions (0o744 = rwxr--r--)
-        assert!(validator.check_file_permission_legacy(1001, 1000, 1000, 1000, 0o744, FileAccess::Read)); // Group can read
-        assert!(!validator.check_file_permission_legacy(1001, 1000, 1000, 1000, 0o744, FileAccess::Write)); // Group cannot write
+        assert!(validator.check_file_permission_legacy(
+            1001,
+            1000,
+            1000,
+            1000,
+            0o744,
+            FileAccess::Read
+        )); // Group can read
+        assert!(!validator.check_file_permission_legacy(
+            1001,
+            1000,
+            1000,
+            1000,
+            0o744,
+            FileAccess::Write
+        )); // Group cannot write
         assert!(!validator.check_file_permission_legacy(
             1001,
             1000,
@@ -692,8 +879,22 @@ mod tests {
         )); // Group cannot execute
 
         // User is neither owner nor in group - should use other permissions (0o744 = rwxr--r--)
-        assert!(validator.check_file_permission_legacy(2000, 2000, 1000, 1000, 0o744, FileAccess::Read)); // Others can read
-        assert!(!validator.check_file_permission_legacy(2000, 2000, 1000, 1000, 0o744, FileAccess::Write)); // Others cannot write
+        assert!(validator.check_file_permission_legacy(
+            2000,
+            2000,
+            1000,
+            1000,
+            0o744,
+            FileAccess::Read
+        )); // Others can read
+        assert!(!validator.check_file_permission_legacy(
+            2000,
+            2000,
+            1000,
+            1000,
+            0o744,
+            FileAccess::Write
+        )); // Others cannot write
         assert!(!validator.check_file_permission_legacy(
             2000,
             2000,
@@ -711,12 +912,26 @@ mod tests {
         // Root should always have access regardless of file ownership or permissions
         assert!(validator.check_file_permission_legacy(0, 0, 1000, 1000, 0o000, FileAccess::Read)); // No permissions
         assert!(validator.check_file_permission_legacy(0, 0, 1000, 1000, 0o000, FileAccess::Write));
-        assert!(validator.check_file_permission_legacy(0, 0, 1000, 1000, 0o000, FileAccess::Execute));
+        assert!(validator.check_file_permission_legacy(
+            0,
+            0,
+            1000,
+            1000,
+            0o000,
+            FileAccess::Execute
+        ));
 
         // Even with restrictive permissions, root gets access
         assert!(validator.check_file_permission_legacy(0, 0, 2000, 2000, 0o000, FileAccess::Read));
         assert!(validator.check_file_permission_legacy(0, 0, 2000, 2000, 0o000, FileAccess::Write));
-        assert!(validator.check_file_permission_legacy(0, 0, 2000, 2000, 0o000, FileAccess::Execute));
+        assert!(validator.check_file_permission_legacy(
+            0,
+            0,
+            2000,
+            2000,
+            0o000,
+            FileAccess::Execute
+        ));
     }
 
     #[test]
@@ -763,17 +978,18 @@ mod tests {
 
         // File with no permissions (0o000) - root should be denied in zero-trust mode
         // even though root is in allowed_users
+        assert!(!validator.check_file_permission_legacy(0, 0, 1000, 1000, 0o000, FileAccess::Read));
         assert!(!validator.check_file_permission_legacy(
-            0, 0, 1000, 1000, 0o000, FileAccess::Read
-        ));
-        assert!(!validator.check_file_permission_legacy(
-            0, 0, 1000, 1000, 0o000, FileAccess::Write
+            0,
+            0,
+            1000,
+            1000,
+            0o000,
+            FileAccess::Write
         ));
 
         // With proper permissions, root can access
-        assert!(validator.check_file_permission_legacy(
-            0, 0, 1000, 1000, 0o644, FileAccess::Read
-        ));
+        assert!(validator.check_file_permission_legacy(0, 0, 1000, 1000, 0o644, FileAccess::Read));
     }
 
     #[test]
@@ -789,14 +1005,15 @@ mod tests {
         assert_eq!(validator.is_root_bypass_enabled(), true);
 
         // In legacy mode, root bypasses all file permissions
+        assert!(validator.check_file_permission_legacy(0, 0, 1000, 1000, 0o000, FileAccess::Read));
+        assert!(validator.check_file_permission_legacy(0, 0, 1000, 1000, 0o000, FileAccess::Write));
         assert!(validator.check_file_permission_legacy(
-            0, 0, 1000, 1000, 0o000, FileAccess::Read
-        ));
-        assert!(validator.check_file_permission_legacy(
-            0, 0, 1000, 1000, 0o000, FileAccess::Write
-        ));
-        assert!(validator.check_file_permission_legacy(
-            0, 0, 1000, 1000, 0o000, FileAccess::Execute
+            0,
+            0,
+            1000,
+            1000,
+            0o000,
+            FileAccess::Execute
         ));
     }
 
@@ -812,11 +1029,14 @@ mod tests {
         let validator = SecurityValidator::new(config);
 
         // Even in legacy mode, root must be in allowed_users
+        assert!(!validator.check_file_permission_legacy(0, 0, 1000, 1000, 0o777, FileAccess::Read));
         assert!(!validator.check_file_permission_legacy(
-            0, 0, 1000, 1000, 0o777, FileAccess::Read
-        ));
-        assert!(!validator.check_file_permission_legacy(
-            0, 0, 1000, 1000, 0o777, FileAccess::Write
+            0,
+            0,
+            1000,
+            1000,
+            0o777,
+            FileAccess::Write
         ));
     }
 
@@ -833,13 +1053,20 @@ mod tests {
         // Root access with proper permissions should generate audit log
         let path = "/medical/patient_record.txt";
         assert!(validator.check_file_permission(
-            0, 0, 1000, 1000, 0o644, FileAccess::Read, Some(path)
+            0,
+            0,
+            1000,
+            1000,
+            0o644,
+            FileAccess::Read,
+            Some(path)
         ));
 
         // Check that audit log was created
         let log = validator.get_audit_log();
         assert!(!log.is_empty());
-        let root_access_entries: Vec<_> = log.iter()
+        let root_access_entries: Vec<_> = log
+            .iter()
             .filter(|e| e.event_type == "root_access")
             .collect();
         assert!(!root_access_entries.is_empty());

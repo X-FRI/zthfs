@@ -68,8 +68,13 @@ pub use core::integrity::IntegrityHandler;
 pub use core::logging::{AccessLogEntry, LogHandler};
 pub use errors::{ZthfsError, ZthfsResult};
 pub use fs_impl::{Zthfs, operations::FileSystemOperations};
-pub use key_management::{FileKeyStorage, InMemoryKeyStorage, KeyManager, KeyMetadata, KeyStorage, StoredKey, create_file_key_manager};
-pub use transactions::{CowHelper, TransactionId, TransactionOp, TransactionStatus, WalEntry, WriteAheadLog};
+pub use key_management::{
+    FileKeyStorage, InMemoryKeyStorage, KeyManager, KeyMetadata, KeyStorage, StoredKey,
+    create_file_key_manager,
+};
+pub use transactions::{
+    CowHelper, TransactionId, TransactionOp, TransactionStatus, WalEntry, WriteAheadLog,
+};
 pub mod operations {
     pub use crate::fs_impl::operations::FileSystemOperations;
 }
@@ -131,8 +136,22 @@ mod integration_tests {
 
         // Test permission checks
         // User 1000 owns the file (uid=1000, gid=1000)
-        assert!(validator.check_file_permission_legacy(1000, 1000, 1000, 1000, 0o644, FileAccess::Read));
-        assert!(validator.check_file_permission_legacy(1000, 1000, 1000, 1000, 0o644, FileAccess::Write));
+        assert!(validator.check_file_permission_legacy(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o644,
+            FileAccess::Read
+        ));
+        assert!(validator.check_file_permission_legacy(
+            1000,
+            1000,
+            1000,
+            1000,
+            0o644,
+            FileAccess::Write
+        ));
         assert!(!validator.check_file_permission_legacy(
             1000,
             1000,
@@ -142,7 +161,14 @@ mod integration_tests {
             FileAccess::Execute
         )); // No execute permission
         // User 2000 is not in allowed list, file owned by user 1000, group 1000
-        assert!(!validator.check_file_permission_legacy(2000, 2000, 1000, 1000, 0o777, FileAccess::Read)); // User not allowed
+        assert!(!validator.check_file_permission_legacy(
+            2000,
+            2000,
+            1000,
+            1000,
+            0o777,
+            FileAccess::Read
+        )); // User not allowed
     }
 
     #[test]

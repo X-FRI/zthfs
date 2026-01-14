@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 
 /// File metadata structure for chunked files
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ChunkedFileMetadata {
+#[allow(private_interfaces)]
+pub(crate) struct ChunkedFileMetadata {
     /// Original file size
     pub size: u64,
     /// Number of chunks
@@ -103,7 +104,9 @@ impl FileSystemOperations {
 
         // All retries exhausted - return the error instead of falling back to root inode
         let error = last_error.unwrap();
-        log::error!("Failed to allocate inode for path {path:?} after {max_retries} attempts: {error}");
+        log::error!(
+            "Failed to allocate inode for path {path:?} after {max_retries} attempts: {error}"
+        );
 
         // Return the actual error rather than falling back to inode 1 (root)
         // This prevents the dangerous behavior where multiple files share the same inode
@@ -128,7 +131,7 @@ impl FileSystemOperations {
         let (size, mtime, mode, uid, gid, atime, ctime, is_dir) = if metadata_path.exists() {
             let meta = Self::load_metadata(fs, path)?;
             (
-                meta.size as u64,
+                meta.size,
                 meta.mtime,
                 meta.mode,
                 meta.uid,
@@ -140,7 +143,7 @@ impl FileSystemOperations {
         } else if dir_marker_path.exists() {
             let meta = Self::load_dir_metadata(fs, path)?;
             (
-                meta.size as u64,
+                meta.size,
                 meta.mtime,
                 meta.mode,
                 meta.uid,
@@ -452,7 +455,9 @@ impl FileSystemOperations {
 
                 // Filter out ZTHFS internal metadata files and directory markers
                 let file_name_str = file_name.to_string_lossy();
-                if file_name_str.ends_with(Self::METADATA_SUFFIX) || file_name_str.ends_with(Self::DIR_MARKER_SUFFIX) {
+                if file_name_str.ends_with(Self::METADATA_SUFFIX)
+                    || file_name_str.ends_with(Self::DIR_MARKER_SUFFIX)
+                {
                     continue;
                 }
 
@@ -756,7 +761,12 @@ impl FileSystemOperations {
     }
 
     /// Save file metadata
-    pub fn save_metadata(fs: &Zthfs, path: &Path, metadata: &ChunkedFileMetadata) -> ZthfsResult<()> {
+    #[allow(private_interfaces)]
+    pub fn save_metadata(
+        fs: &Zthfs,
+        path: &Path,
+        metadata: &ChunkedFileMetadata,
+    ) -> ZthfsResult<()> {
         let metadata_path = Self::get_metadata_path(fs, path);
         let json = serde_json::to_string(metadata)
             .map_err(|e| ZthfsError::Serialization(e.to_string()))?;
@@ -765,6 +775,7 @@ impl FileSystemOperations {
     }
 
     /// Load file metadata
+    #[allow(private_interfaces)]
     pub fn load_metadata(fs: &Zthfs, path: &Path) -> ZthfsResult<ChunkedFileMetadata> {
         let metadata_path = Self::get_metadata_path(fs, path);
         let json = fs::read_to_string(&metadata_path)?;
@@ -774,6 +785,7 @@ impl FileSystemOperations {
     }
 
     /// Load directory metadata from marker file
+    #[allow(private_interfaces)]
     pub fn load_dir_metadata(fs: &Zthfs, path: &Path) -> ZthfsResult<ChunkedFileMetadata> {
         let marker_path = Self::get_dir_marker_path(fs, path);
         let json = fs::read_to_string(&marker_path)?;
@@ -896,7 +908,7 @@ impl FileSystemOperations {
             chunk_count: total_chunks as u32,
             chunk_size,
             mtime: now,
-            mode: 0o644,  // Default: rw-r--r--
+            mode: 0o644, // Default: rw-r--r--
             uid: unsafe { libc::getuid() } as u32,
             gid: unsafe { libc::getgid() } as u32,
             atime: now,
@@ -923,7 +935,9 @@ impl FileSystemOperations {
         let dst_str = dst_str_owned.as_bytes();
 
         // Check source exists
-        let src_inode = fs.inode_db.get(src_str)?
+        let src_inode = fs
+            .inode_db
+            .get(src_str)?
             .ok_or_else(|| ZthfsError::Fs("Source does not exist".to_string()))?;
 
         // Check target doesn't exist (unless we're implementing overwrite)
@@ -932,8 +946,10 @@ impl FileSystemOperations {
         }
 
         let inode_num = u64::from_be_bytes(
-            src_inode.as_ref().try_into()
-                .map_err(|_| ZthfsError::Fs("Invalid inode data".to_string()))?
+            src_inode
+                .as_ref()
+                .try_into()
+                .map_err(|_| ZthfsError::Fs("Invalid inode data".to_string()))?,
         );
 
         // Move the actual data on disk FIRST (before database update)
@@ -961,9 +977,7 @@ impl FileSystemOperations {
         }
 
         // Move actual file or directory
-        if src_real.is_dir() {
-            fs::rename(&src_real, &dst_real)?;
-        } else if src_real.exists() {
+        if src_real.is_dir() || src_real.exists() {
             fs::rename(&src_real, &dst_real)?;
         }
 
@@ -1003,6 +1017,8 @@ impl FileSystemOperations {
     }
 
     /// Set file attributes (mode, uid, gid, size, atime, mtime)
+    #[allow(clippy::too_many_arguments)]
+    #[allow(unused_assignments)]
     pub fn set_file_attributes(
         fs: &Zthfs,
         path: &Path,
@@ -1020,12 +1036,11 @@ impl FileSystemOperations {
             .unwrap()
             .as_secs();
 
-        let mut updated = false;
-
         if metadata_path.exists() {
             // File with extended metadata
             let mut metadata = Self::load_metadata(fs, path)?;
 
+            let mut updated = false;
             if let Some(new_mode) = mode {
                 metadata.mode = new_mode;
                 updated = true;
@@ -1065,6 +1080,7 @@ impl FileSystemOperations {
             // Directory with metadata
             let mut metadata = Self::load_dir_metadata(fs, path)?;
 
+            let mut updated = false;
             if let Some(new_mode) = mode {
                 metadata.mode = new_mode;
                 updated = true;
@@ -1115,17 +1131,24 @@ impl FileSystemOperations {
         if metadata_path.exists() {
             let mut metadata = Self::load_metadata(fs, path)?;
 
-            if new_size < metadata.size {
-                // Truncate: just update metadata size
-                // Read operations will respect the new size
-                metadata.size = new_size;
-                Self::save_metadata(fs, path, &metadata)?;
-            } else if new_size > metadata.size {
-                // Extend: write zeros at the end
-                let current_data = Self::read_file_chunked(fs, path)?;
-                let mut extended_data = vec![0u8; new_size as usize];
-                extended_data[..current_data.len()].copy_from_slice(&current_data);
-                Self::write_file_chunked(fs, path, &extended_data)?;
+            use std::cmp::Ordering;
+            match new_size.cmp(&metadata.size) {
+                Ordering::Less => {
+                    // Truncate: just update metadata size
+                    // Read operations will respect the new size
+                    metadata.size = new_size;
+                    Self::save_metadata(fs, path, &metadata)?;
+                }
+                Ordering::Greater => {
+                    // Extend: write zeros at the end
+                    let current_data = Self::read_file_chunked(fs, path)?;
+                    let mut extended_data = vec![0u8; new_size as usize];
+                    extended_data[..current_data.len()].copy_from_slice(&current_data);
+                    Self::write_file_chunked(fs, path, &extended_data)?;
+                }
+                Ordering::Equal => {
+                    // Same size, nothing to do
+                }
             }
         } else {
             // Regular file - read, truncate/extend, write back
@@ -2166,8 +2189,14 @@ mod tests {
 
         // Verify new metadata fields exist
         assert!(metadata.mode > 0, "Metadata should have mode");
-        assert!(metadata.uid > 0 || metadata.uid == 0, "Metadata should have uid");
-        assert!(metadata.gid > 0 || metadata.gid == 0, "Metadata should have gid");
+        assert!(
+            metadata.uid > 0 || metadata.uid == 0,
+            "Metadata should have uid"
+        );
+        assert!(
+            metadata.gid > 0 || metadata.gid == 0,
+            "Metadata should have gid"
+        );
         assert!(metadata.atime > 0, "Metadata should have atime");
         assert!(metadata.ctime > 0, "Metadata should have ctime");
         assert!(!metadata.is_dir, "File should not be marked as directory");

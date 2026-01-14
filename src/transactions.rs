@@ -47,6 +47,12 @@ impl TransactionId {
     }
 }
 
+impl Default for TransactionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Operation type within a transaction
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TransactionOp {
@@ -63,10 +69,7 @@ pub enum TransactionOp {
         backup_path: Option<String>,
     },
     /// Rename/move operation
-    Rename {
-        from: String,
-        to: String,
-    },
+    Rename { from: String, to: String },
 }
 
 /// A single transaction entry in the WAL
@@ -212,8 +215,9 @@ impl WriteAheadLog {
 
         let file = File::open(&path)?;
         let reader = BufReader::new(file);
-        let entry: WalEntry = bincode::deserialize_from(reader)
-            .map_err(|e| ZthfsError::Serialization(format!("Failed to deserialize WAL entry: {e}")))?;
+        let entry: WalEntry = bincode::deserialize_from(reader).map_err(|e| {
+            ZthfsError::Serialization(format!("Failed to deserialize WAL entry: {e}"))
+        })?;
 
         Ok(entry)
     }
@@ -229,8 +233,9 @@ impl WriteAheadLog {
             .open(&path)?;
 
         let mut writer = BufWriter::new(file);
-        bincode::serialize_into(&mut writer, entry)
-            .map_err(|e| ZthfsError::Serialization(format!("Failed to serialize WAL entry: {e}")))?;
+        bincode::serialize_into(&mut writer, entry).map_err(|e| {
+            ZthfsError::Serialization(format!("Failed to serialize WAL entry: {e}"))
+        })?;
 
         // Sync to disk to ensure durability
         writer.flush()?;
@@ -252,14 +257,16 @@ impl WriteAheadLog {
                         fs::remove_file(temp_path)?;
                     }
                 }
-                TransactionOp::DeleteFile { backup_path, .. } => {
+                TransactionOp::DeleteFile {
+                    backup_path: Some(backup),
+                    ..
+                } => {
                     // Remove backup if exists
-                    if let Some(backup) = backup_path {
-                        if Path::new(backup).exists() {
-                            fs::remove_file(backup)?;
-                        }
+                    if Path::new(backup).exists() {
+                        fs::remove_file(backup)?;
                     }
                 }
+                TransactionOp::DeleteFile { .. } => {}
                 _ => {}
             }
         }
@@ -308,14 +315,16 @@ impl WriteAheadLog {
                                     fs::remove_file(temp_path)?;
                                 }
                             }
-                            TransactionOp::DeleteFile { path, backup_path } => {
+                            TransactionOp::DeleteFile {
+                                path,
+                                backup_path: Some(backup),
+                            } => {
                                 // Restore from backup if exists
-                                if let Some(backup) = backup_path {
-                                    if Path::new(backup).exists() {
-                                        fs::rename(backup, path)?;
-                                    }
+                                if Path::new(backup).exists() {
+                                    fs::rename(backup, path)?;
                                 }
                             }
+                            TransactionOp::DeleteFile { .. } => {}
                             _ => {}
                         }
                     }
@@ -336,8 +345,9 @@ impl WriteAheadLog {
                         .open(&tx_path)?;
 
                     let mut writer = BufWriter::new(file);
-                    bincode::serialize_into(&mut writer, &recovered)
-                        .map_err(|e| ZthfsError::Serialization(format!("Failed to serialize WAL entry: {e}")))?;
+                    bincode::serialize_into(&mut writer, &recovered).map_err(|e| {
+                        ZthfsError::Serialization(format!("Failed to serialize WAL entry: {e}"))
+                    })?;
                     writer.flush()?;
                 }
                 TransactionStatus::Committed => {
@@ -378,8 +388,9 @@ impl WriteAheadLog {
 
             let file = File::open(&path)?;
             let reader = BufReader::new(file);
-            let wal_entry: WalEntry = bincode::deserialize_from(reader)
-                .map_err(|e| ZthfsError::Serialization(format!("Failed to deserialize WAL entry: {e}")))?;
+            let wal_entry: WalEntry = bincode::deserialize_from(reader).map_err(|e| {
+                ZthfsError::Serialization(format!("Failed to deserialize WAL entry: {e}"))
+            })?;
 
             if wal_entry.status == TransactionStatus::InProgress {
                 incomplete.push(wal_entry.tx_id);
@@ -534,12 +545,16 @@ mod tests {
         assert!(wal.get_incomplete_transactions().unwrap().contains(&tx_id));
 
         // Add operation
-        wal.add_op(&tx_id, TransactionOp::WriteFile {
-            path: "/test/file.txt".to_string(),
-            temp_path: "/tmp/file.tmp".to_string(),
-            size: 100,
-            checksum: vec![1, 2, 3],
-        }).unwrap();
+        wal.add_op(
+            &tx_id,
+            TransactionOp::WriteFile {
+                path: "/test/file.txt".to_string(),
+                temp_path: "/tmp/file.tmp".to_string(),
+                size: 100,
+                checksum: vec![1, 2, 3],
+            },
+        )
+        .unwrap();
 
         // Commit transaction
         wal.commit(&tx_id).unwrap();
@@ -558,12 +573,20 @@ mod tests {
         let tx_id = wal.begin_transaction().unwrap();
 
         // Add operation
-        wal.add_op(&tx_id, TransactionOp::WriteFile {
-            path: "/test/file.txt".to_string(),
-            temp_path: temp_dir.path().join("temp.tmp").to_string_lossy().to_string(),
-            size: 100,
-            checksum: vec![1, 2, 3],
-        }).unwrap();
+        wal.add_op(
+            &tx_id,
+            TransactionOp::WriteFile {
+                path: "/test/file.txt".to_string(),
+                temp_path: temp_dir
+                    .path()
+                    .join("temp.tmp")
+                    .to_string_lossy()
+                    .to_string(),
+                size: 100,
+                checksum: vec![1, 2, 3],
+            },
+        )
+        .unwrap();
 
         // Create the temp file
         fs::write(temp_dir.path().join("temp.tmp"), b"temp data").unwrap();

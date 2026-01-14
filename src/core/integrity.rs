@@ -215,33 +215,19 @@ mod tests {
 
         // Test CRC32c verification
         let crc32c_checksum = IntegrityHandler::compute_checksum(data, "crc32c", key).unwrap();
-        assert!(IntegrityHandler::verify_integrity(
-            data,
-            &crc32c_checksum,
-            "crc32c",
-            key
-        ).unwrap());
-        assert!(!IntegrityHandler::verify_integrity(
-            b"Hello, world",
-            &crc32c_checksum,
-            "crc32c",
-            key
-        ).unwrap());
+        assert!(IntegrityHandler::verify_integrity(data, &crc32c_checksum, "crc32c", key).unwrap());
+        assert!(
+            !IntegrityHandler::verify_integrity(b"Hello, world", &crc32c_checksum, "crc32c", key)
+                .unwrap()
+        );
 
         // Test BLAKE3 verification
         let blake3_checksum = IntegrityHandler::compute_checksum(data, "blake3", key).unwrap();
-        assert!(IntegrityHandler::verify_integrity(
-            data,
-            &blake3_checksum,
-            "blake3",
-            key
-        ).unwrap());
-        assert!(!IntegrityHandler::verify_integrity(
-            b"Hello, world",
-            &blake3_checksum,
-            "blake3",
-            key
-        ).unwrap());
+        assert!(IntegrityHandler::verify_integrity(data, &blake3_checksum, "blake3", key).unwrap());
+        assert!(
+            !IntegrityHandler::verify_integrity(b"Hello, world", &blake3_checksum, "blake3", key)
+                .unwrap()
+        );
     }
 
     #[test]
@@ -328,18 +314,8 @@ mod tests {
         let crc32c_checksum = IntegrityHandler::compute_checksum(data, "crc32c", key).unwrap();
         let blake3_checksum = IntegrityHandler::compute_checksum(data, "blake3", key).unwrap();
 
-        assert!(IntegrityHandler::verify_integrity(
-            data,
-            &crc32c_checksum,
-            "crc32c",
-            key
-        ).unwrap());
-        assert!(IntegrityHandler::verify_integrity(
-            data,
-            &blake3_checksum,
-            "blake3",
-            key
-        ).unwrap());
+        assert!(IntegrityHandler::verify_integrity(data, &crc32c_checksum, "crc32c", key).unwrap());
+        assert!(IntegrityHandler::verify_integrity(data, &blake3_checksum, "blake3", key).unwrap());
 
         // But they have different properties
         assert_eq!(crc32c_checksum.len(), 4); // CRC32c is only 4 bytes
@@ -363,15 +339,9 @@ mod tests {
         assert_ne!(checksum1, checksum2);
 
         // Verify integrity
-        assert!(IntegrityHandler::verify_integrity(
-            data1, &checksum1, "blake3", key
-        ).unwrap());
-        assert!(IntegrityHandler::verify_integrity(
-            data2, &checksum2, "blake3", key
-        ).unwrap());
-        assert!(!IntegrityHandler::verify_integrity(
-            data1, &checksum2, "blake3", key
-        ).unwrap());
+        assert!(IntegrityHandler::verify_integrity(data1, &checksum1, "blake3", key).unwrap());
+        assert!(IntegrityHandler::verify_integrity(data2, &checksum2, "blake3", key).unwrap());
+        assert!(!IntegrityHandler::verify_integrity(data1, &checksum2, "blake3", key).unwrap());
     }
 
     #[test]
@@ -472,20 +442,12 @@ mod tests {
         assert_ne!(mac1, mac2);
 
         // Verify each MAC only works with its corresponding key
-        assert!(IntegrityHandler::verify_integrity(
-            data, &mac1, "blake3", key1
-        ).unwrap());
-        assert!(IntegrityHandler::verify_integrity(
-            data, &mac2, "blake3", key2
-        ).unwrap());
+        assert!(IntegrityHandler::verify_integrity(data, &mac1, "blake3", key1).unwrap());
+        assert!(IntegrityHandler::verify_integrity(data, &mac2, "blake3", key2).unwrap());
 
         // MAC should fail with wrong key
-        assert!(!IntegrityHandler::verify_integrity(
-            data, &mac1, "blake3", key2
-        ).unwrap());
-        assert!(!IntegrityHandler::verify_integrity(
-            data, &mac2, "blake3", key1
-        ).unwrap());
+        assert!(!IntegrityHandler::verify_integrity(data, &mac1, "blake3", key2).unwrap());
+        assert!(!IntegrityHandler::verify_integrity(data, &mac2, "blake3", key1).unwrap());
     }
 
     #[test]
@@ -495,26 +457,24 @@ mod tests {
         let key = b"0123456789abcdef0123456789abcdef"; // 32-byte test key
 
         // Compute MAC for original data
-        let original_mac = IntegrityHandler::compute_checksum(original_data, "blake3", key).unwrap();
+        let original_mac =
+            IntegrityHandler::compute_checksum(original_data, "blake3", key).unwrap();
 
         // Original data should verify
-        assert!(IntegrityHandler::verify_integrity(
-            original_data,
-            &original_mac,
-            "blake3",
-            key
-        ).unwrap());
+        assert!(
+            IntegrityHandler::verify_integrity(original_data, &original_mac, "blake3", key)
+                .unwrap()
+        );
 
         // Tampered data should NOT verify with original MAC
-        assert!(!IntegrityHandler::verify_integrity(
-            tampered_data,
-            &original_mac,
-            "blake3",
-            key
-        ).unwrap());
+        assert!(
+            !IntegrityHandler::verify_integrity(tampered_data, &original_mac, "blake3", key)
+                .unwrap()
+        );
 
         // Even if attacker computes a new MAC for tampered data, it won't match the stored MAC
-        let tampered_mac = IntegrityHandler::compute_checksum(tampered_data, "blake3", key).unwrap();
+        let tampered_mac =
+            IntegrityHandler::compute_checksum(tampered_data, "blake3", key).unwrap();
         assert_ne!(original_mac, tampered_mac);
     }
 
@@ -526,6 +486,11 @@ mod tests {
         // Unsupported algorithm should return an error instead of panicking
         let result = IntegrityHandler::compute_checksum(data, "md5", key);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unsupported algorithm"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unsupported algorithm")
+        );
     }
 }

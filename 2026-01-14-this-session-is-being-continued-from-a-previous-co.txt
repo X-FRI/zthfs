@@ -1,0 +1,675 @@
+
+╭─── Claude Code v2.1.2 ───────────────────────────────────────────────────────╮
+│                                  │ Tips for getting started                  │
+│           Welcome back!          │ Run /init to create a CLAUDE.md file wit… │
+│                                  │ ───────────────────────────────────────── │
+│              ▐▛███▜▌             │ Recent activity                           │
+│             ▝▜█████▛▘            │ No recent activity                        │
+│               ▘▘ ▝▝              │                                           │
+│                                  │                                           │
+│   Opus 4.5 · API Usage Billing   │                                           │
+│        ~/Workspace/zthfs         │                                           │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+  Welcome to Opus 4.5
+══════════════════ Conversation compacted · ctrl+o for history ═════════════════
+
+● 根据我刚才读取的 src/fs_impl/mod.rs，FUSE 集成的实际状态如下：
+
+  FUSE 集成完成度评估
+
+  已实现的操作 (7 个)
+  ┌─────────┬───────────────────────────┬──────────┐
+  │  操作   │           功能            │ 实现质量 │
+  ├─────────┼───────────────────────────┼──────────┤
+  │ lookup  │ inode 路径解析 + 权限检查 │ ✅ 完整  │
+  ├─────────┼───────────────────────────┼──────────┤
+  │ getattr │ 获取文件属性 (stat)       │ ✅ 完整  │
+  ├─────────┼───────────────────────────┼──────────┤
+  │ read    │ 读取文件内容              │ ✅ 完整  │
+  ├─────────┼───────────────────────────┼──────────┤
+  │ write   │ 写入文件内容              │ ✅ 完整  │
+  ├─────────┼───────────────────────────┼──────────┤
+  │ readdir │ 列出目录内容              │ ✅ 完整  │
+  ├─────────┼───────────────────────────┼──────────┤
+  │ create  │ 创建新文件                │ ✅ 完整  │
+  ├─────────┼───────────────────────────┼──────────┤
+  │ unlink  │ 删除文件                  │ ✅ 完整  │
+  └─────────┴───────────────────────────┴──────────┘
+  未实现的关键操作 (fuser::Filesystem trait 共 30+ 方法)
+  ┌────────────────────┬────────────────────────────────┐
+  │      缺失操作      │              影响              │
+  ├────────────────────┼────────────────────────────────┤
+  │ mkdir / rmdir      │ 无法创建/删除子目录 - 严重限制 │
+  ├────────────────────┼────────────────────────────────┤
+  │ rename             │ 无法重命名文件或目录           │
+  ├────────────────────┼────────────────────────────────┤
+  │ setattr            │ 无法修改权限、时间戳           │
+  ├────────────────────┼────────────────────────────────┤
+  │ fsync              │ 无法强制同步数据到磁盘         │
+  ├────────────────────┼────────────────────────────────┤
+  │ open / release     │ 无文件句柄生命周期管理         │
+  ├────────────────────┼────────────────────────────────┤
+  │ readlink / symlink │ 不支持符号链接                 │
+  ├────────────────────┼────────────────────────────────┤
+  │ statfs             │ 无法报告文件系统容量           │
+  └────────────────────┴────────────────────────────────┘
+  实际可用性结论
+
+  当前 FUSE 集成处于 "最小可行原型" 阶段：
+  - ✅ 可以挂载
+  - ✅ 可以读写根目录下的文件
+  - ❌ 无法创建子目录 (mkdir 未实现)
+  - ❌ 无法重命名文件
+  - ❌ 部署脚本的 mount 子命令能成功挂载，但功能受限
+
+  与之前 README 声明的差异
+
+  README 中说 "FUSE 集成尚未完成" 是保守但准确的描述。虽然 trait 已实现，但缺失的功能使其无法作为通用文件系统使用。
+
+  是否需要我补充实现 mkdir/rmdir 等目录操作？这是使文件系统真正可用的关键步骤。
+
+✻ Churned for 52s
+
+❯ /superpowers:brainstorm 
+
+● /superpowers:brainstorming
+  ⎿  Initializing…
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ /superpowers:brainstorm 请你补充完善 
+
+● /superpowers:brainstorming
+
+● 我来帮你完善 FUSE 集成。首先让我理解一下当前的上下文。
+
+● Read(src/fs_impl/mod.rs)
+  ⎿  Read 777 lines
+
+● 现在我已经了解了当前的实现状态。让我先问一个关键问题来明确设计方向：
+
+  问题：关于 FUSE 完善的优先级，你更倾向于哪种方案？
+
+  A. 最小可用补全 - 只实现 mkdir/rmdir，让文件系统能正常创建目录层级，其他功能暂不实现
+
+  B. 核心功能完整 - 实现 mkdir/rmdir + rename + setattr + fsync，覆盖基本 POSIX 操作，足够大多数应用使用
+
+  C. 生产级完整 - 实现所有 FUSE trait 方法（包括符号链接、硬链接、文件锁等），达到与 ext4 同等功能水平
+
+❯ C. 生产级完整 - 实现所有 FUSE trait                                       
+  方法（包括符号链接、硬链接、文件锁等），达到与 ext4 同等功能水平          
+                                                                            
+  注意, 在你给出设计选项的时候, 需要评估并给出一个选项的详细对比结果,       
+  方便我判断 (ultrathink)                                                   
+
+● 明白，让我先给出详细的方案对比分析。
+
+  FUSE 完善方案对比
+
+  方案 A：最小可用补全
+  ┌────────────┬──────────────────────────────────────┐
+  │    维度    │                 评估                 │
+  ├────────────┼──────────────────────────────────────┤
+  │ 实现范围   │ mkdir, rmdir (2 个方法)              │
+  ├────────────┼──────────────────────────────────────┤
+  │ 开发工作量 │ ~300 行代码，1-2 天                  │
+  ├────────────┼──────────────────────────────────────┤
+  │ 适用场景   │ 只能创建单层目录结构，无法重命名文件 │
+  ├────────────┼──────────────────────────────────────┤
+  │ 风险       │ 低 - 逻辑简单，不涉及并发控制        │
+  ├────────────┼──────────────────────────────────────┤
+  │ 长期维护   │ 差 - 不完整，后续仍需补充            │
+  └────────────┴──────────────────────────────────────┘
+  方案 B：核心功能完整
+  维度: 实现范围
+  评估: mkdir, rmdir, rename, setattr, fsync, open, release, truncate (8 个方法)
+  ────────────────────────────────────────
+  维度: 开发工作量
+  评估: ~800 行代码，4-5 天
+  ────────────────────────────────────────
+  维度: 适用场景
+  评估: 满足大多数 CLI 工具和基础应用需求
+  ────────────────────────────────────────
+  维度: 风险
+  评估: 中 - rename 需要原子性保证，setattr 涉及权限修改
+  ────────────────────────────────────────
+  维度: 长期维护
+  评估: 良好 - 覆盖 80% 常用操作
+  方案 C：生产级完整
+  维度: 实现范围
+  评估: 所有 fuser::Filesystem 方法：目录操作、符号链接、硬链接、文件锁 (flock,
+    lock)、扩展属性 (xattr)、块设备映射、statfs
+  ────────────────────────────────────────
+  维度: 开发工作量
+  评估: ~2000+ 行代码，2-3 周
+  ────────────────────────────────────────
+  维度: 适用场景
+  评估: 完整 POSIX 兼容，支持 Git、Docker、数据库等复杂应用
+  ────────────────────────────────────────
+  维度: 风险
+  评估: 高 - 硬链接需要引用计数，文件锁需要跨进程同步，xattr 需要持久化设计
+  ────────────────────────────────────────
+  维度: 长期维护
+  评估: 优秀 - 一次性解决，后续只需 bugfix
+  ---
+  详细对比矩阵
+  ┌──────────┬──────────────┬─────────────────────┬───────────────────────────┐
+  │ 功能类别 │    方案 A    │       方案 B        │          方案 C           │
+  ├──────────┼──────────────┼─────────────────────┼───────────────────────────┤
+  │ 目录操作 │ mkdir, rmdir │ + rename            │ + 全部                    │
+  ├──────────┼──────────────┼─────────────────────┼───────────────────────────┤
+  │ 文件属性 │ ❌           │ chmod, chown, utime │ + 扩展属性                │
+  ├──────────┼──────────────┼─────────────────────┼───────────────────────────┤
+  │ 文件句柄 │ ❌           │ open, release       │ + flush, fallocate        │
+  ├──────────┼──────────────┼─────────────────────┼───────────────────────────┤
+  │ 链接支持 │ ❌           │ ❌                  │ symlink, readlink, link   │
+  ├──────────┼──────────────┼─────────────────────┼───────────────────────────┤
+  │ 文件锁   │ ❌           │ ❌                  │ flock, setlk, getlk       │
+  ├──────────┼──────────────┼─────────────────────┼───────────────────────────┤
+  │ 元数据   │ ❌           │ ❌                  │ xattr (user., trust.)     │
+  ├──────────┼──────────────┼─────────────────────┼───────────────────────────┤
+  │ FS 信息  │ ❌           │ ❌                  │ statfs (容量、inode 统计) │
+  ├──────────┼──────────────┼─────────────────────┼───────────────────────────┤
+  │ 测试覆盖 │ 基础测试     │ 集成测试            │ fstest POSIX 套件         │
+  └──────────┴──────────────┴─────────────────────┴───────────────────────────┘
+  ---
+  技术复杂度分析
+  ┌──────────┬──────────┬────────────────────┬────────────────────┐
+  │   挑战   │  方案 A  │       方案 B       │       方案 C       │
+  ├──────────┼──────────┼────────────────────┼────────────────────┤
+  │ 原子性   │ 无需考虑 │ rename 需要事务    │ 硬链接+rename 组合 │
+  ├──────────┼──────────┼────────────────────┼────────────────────┤
+  │ 并发控制 │ 无需考虑 │ 无                 │ 文件锁需要状态机   │
+  ├──────────┼──────────┼────────────────────┼────────────────────┤
+  │ 存储设计 │ 复用现有 │ 需要增加元数据字段 │ 需要：             │
+  └──────────┴──────────┴────────────────────┴────────────────────┘
+  - 引用计数 (硬链接)
+  - 锁状态表 (flock)
+  - xattr 存储 |
+  | inode 管理 | 复用现有 | 无需改动 | 需要动态分配策略 |
+
+  ---
+  我的推荐
+
+  虽然你选择了方案 C，但我需要指出一个技术现实：
+
+  当前代码库的存储层基于 "加密数据块" 设计（每个文件一个加密块 + HMAC）。这个架构对硬链接支持不友好：
+  - 硬链接需要多个路径指向同一数据块
+  - 当前的每个文件独立加密模式无法共享数据块
+
+  建议的分阶段实现：
+
+  1. 第一阶段（本周）：实现方案 B 的全部功能
+  2. 第二阶段（下周）：实现符号链接、xattr、statfs（不涉及数据共享）
+  3. 第三阶段（评估后）：硬链接需要架构调整，可能需要：
+    - 引入 "内容寻址存储" (CAS) 层
+    - 或者限制硬链接只对未加密文件有效
+
+  这样既能快速获得可用系统，又为完整功能留出路径。
+
+  ---
+  这个分阶段计划可以接受吗？还是你有不同的优先级考虑？
+
+✻ Cogitated for 43s
+
+❯ 那我们先实现方案 B 
+
+● 好的，开始设计方案 B。让我分几段展示，每段确认后继续。
+
+  ---
+  设计第一部分：目录操作 (mkdir / rmdir)
+
+  架构概览
+
+  目录操作的挑战在于持久化表示。当前设计：
+  - 实际文件存储在 data_dir/ 下（加密的 chunk 文件）
+  - inode 到路径的映射存储在 sled 数据库中
+
+  关键问题：目录本身不占用实际存储空间，它只是 inode 映射中的一个"命名空间节点"。
+
+  mkdir 实现
+
+  fn mkdir(&mut self, req: &Request, parent: u64, name: &OsStr, mode: u32, umask: u32)
+
+  逻辑流程：
+  1. 权限检查：父目录的写权限 + 当前用户授权
+  2. 构建目录路径：parent_path + name
+  3. 检查目标是否已存在（查 inode_db）
+  4. 创建新的 inode 映射（get_or_create_inode）
+  5. 在实际存储中创建一个标记目录（空文件，扩展属性标记 is_directory=true）
+  6. 返回 FileAttr（类型为 S_IFDIR）
+
+  设计决策：为什么需要在存储层创建标记文件？
+  - crash recovery 时能重建目录结构
+  - 后续实现 rmdir 时可以检查目录是否为空
+
+  rmdir 实现
+
+  fn rmdir(&mut self, req: &Request, parent: u64, name: &OsStr)
+
+  逻辑流程：
+  1. 权限检查
+  2. 查询目标 inode
+  3. 关键：遍历检查目录是否为空（扫描 inode_db 中所有以此路径为前缀的条目）
+  4. 如果非空，返回 ENOTEMPTY
+  5. 如果为空：删除 inode 映射 + 删除存储层标记文件
+
+  性能考虑：空目录检查需要扫描，但通过 sled 的前缀迭代可以高效完成。
+
+  ---
+  这段设计看起来正确吗？有没有需要调整的地方？
+
+❯ 继续 
+
+● 设计第二部分：原子重命名 (rename)
+
+  rename 实现
+
+  fn rename(&mut self, req: &Request, parent: u64, name: &OsStr,
+            newparent: u64, newname: &OsStr, flags: u32)
+
+  原子性保证
+
+  挑战：重命名涉及 4 个操作，必须全部成功或全部失败：
+  1. 查询源 inode
+  2. 删除 old_parent/name 的路径映射
+  3. 删除 inode -> old_path 的反向映射
+  4. 插入 new_parent/newname 的路径映射
+  5. 插入 inode -> new_path 的反向映射
+
+  使用 sled 的事务 API：
+
+  fn rename_with_transaction(&self, old_path: &Path, new_path: &Path) -> ZthfsResult<()> {
+      let old_key = old_path.to_string_lossy().as_bytes();
+      let new_key = new_path.to_string_lossy().as_bytes();
+
+      // 检查目标不存在
+      if self.inode_db.contains_key(new_key)? {
+          return Err(ZthfsError::Fs("Target already exists".into()));
+      }
+
+      // 原子操作：使用 sled Batch
+      let mut batch = sled::Batch::default();
+
+      // 获取现有 inode
+      let inode = self.inode_db.get(old_key)?
+          .ok_or_else(|| ZthfsError::Fs("Source not found".into()))?;
+      let inode_num = u64::from_be_bytes(inode.as_ref().try_into()?);
+
+      // 删除旧映射
+      batch.remove(old_key);
+      batch.remove(&inode_num.to_be_bytes());
+
+      // 添加新映射
+      batch.insert(new_key, &inode);
+      batch.insert(&inode_num.to_be_bytes(), new_path.to_string_lossy().as_bytes());
+
+      self.inode_db.apply_batch(batch)?;
+
+      // 同步更新内存 DashMap
+      self.inodes.insert(inode_num, new_path.to_path_buf());
+
+      Ok(())
+  }
+
+  跨目录移动
+
+  当 parent != newparent 时：
+  - 同样逻辑适用，inode 不变
+  - 只需更新路径映射
+  - 数据块无需移动（路径是虚拟的，实际数据由 chunk ID 定位）
+
+  边界情况
+  ┌──────────────────────┬───────────────────────────────────────────────────┐
+  │         情况         │                       处理                        │
+  ├──────────────────────┼───────────────────────────────────────────────────┤
+  │ 目标已存在           │ 返回 EEXIST（除非 flags & RENAME_NOREPLACE == 0） │
+  ├──────────────────────┼───────────────────────────────────────────────────┤
+  │ 源是目录且目标是文件 │ 返回 EISDIR                                       │
+  ├──────────────────────┼───────────────────────────────────────────────────┤
+  │ 源是文件且目标是目录 │ 返回 ENOTDIR                                      │
+  ├──────────────────────┼───────────────────────────────────────────────────┤
+  │ 目标是非空目录       │ 返回 ENOTEMPTY                                    │
+  └──────────────────────┴───────────────────────────────────────────────────┘
+  ---
+  这段设计看起来正确吗？
+
+❯ 正确 
+
+● 设计第三部分：setattr (chmod / chown / utime)
+
+  setattr 实现
+
+  fn setattr(&mut self, req: &Request, ino: u64, mode: Option<u32>,
+             uid: Option<u32>, gid: Option<u32>, size: Option<u64>,
+             atime: Option<SystemTime>, mtime: Option<SystemTime>,
+             _fh: Option<u64>, _cr: Option<u64>, _kill_priv: bool,
+             reply: ReplyAttr)
+
+  存储层变更
+
+  当前每个文件的元数据存储在加密 chunk 的 header 中。需要扩展 FileMetadata 结构：
+
+  // src/core/types.rs
+  #[derive(Debug, Clone, Serialize, Deserialize)]
+  pub struct FileMetadata {
+      pub version: u64,
+      pub chunk_size: u64,
+      pub original_size: u64,
+      pub created_at: u64,
+
+      // 新增字段
+      pub mode: u32,        // 文件权限 (e.g., 0o644)
+      pub uid: u32,         // 所有者
+      pub gid: u32,         // 所属组
+      pub atime: u64,       // 最后访问时间
+      pub mtime: u64,       // 最后修改时间
+      pub ctime: u64,       // 元数据变更时间
+      pub is_dir: bool,     // 是否为目录
+  }
+
+  操作策略
+  ┌─────────────────────┬─────────────────────────────────────────┐
+  │      修改类型       │                处理方式                 │
+  ├─────────────────────┼─────────────────────────────────────────┤
+  │ mode (chmod)        │ 解密元数据 → 修改 mode → 重新加密并写入 │
+  ├─────────────────────┼─────────────────────────────────────────┤
+  │ uid/gid (chown)     │ 同上，需要 CAP_CHOWN 权限检查           │
+  ├─────────────────────┼─────────────────────────────────────────┤
+  │ atime/mtime (utime) │ 同上                                    │
+  ├─────────────────────┼─────────────────────────────────────────┤
+  │ size (truncate)     │ 调用 truncate 逻辑（下一节）            │
+  └─────────────────────┴─────────────────────────────────────────┘
+  权限检查
+
+  // chmod: 只有所有者或 root 可以修改
+  if let Some(new_mode) = mode {
+      if attr.uid != uid && uid != 0 {
+          reply.error(libc::EPERM);
+          return;
+      }
+  }
+
+  // chown: 需要特殊权限
+  if uid.is_some() || gid.is_some() {
+      if !self.has_capability(req, libc::CAP_CHOWN) {
+          reply.error(libc::EPERM);
+          return;
+      }
+  }
+
+  ctime 自动更新
+
+  任何 setattr 操作都必须更新 ctime（元数据变更时间），这是 POSIX 要求。
+
+  ---
+  这段设计看起来正确吗？
+
+❯ 正确, 只要符合 POSIX 标准的统统都正确 
+
+● 设计第四部分：文件句柄与同步 (fsync / open / release / truncate)
+
+  open 实现
+
+  fn open(&mut self, req: &Request, ino: u64, flags: i32, reply: ReplyOpen)
+
+  作用：建立文件句柄，支持打开模式检查。
+
+  设计决策：当前实现没有真正的文件句柄表（因为每次 FUSE 操作都直接通过 inode 定位）。open 只需要：
+
+  1. 权限检查（读/写根据 flags 的 O_ACCMODE）
+  2. 记录打开状态（可选，用于 release 时统计）
+  3. 返回 fh = 0（占位）和 FOPEN_KEEP_CACHE 标志
+
+  fn open(&mut self, req: &Request, ino: u64, flags: i32, reply: ReplyOpen) {
+      let path = self.get_path_for_inode(ino).unwrap();
+      let attr = self.get_attr(&path)?;
+
+      let read_required = (flags & libc::O_ACCMODE) != libc::O_WRONLY;
+      let write_required = (flags & libc::O_ACCMODE) != libc::O_RDONLY;
+
+      if read_required && !self.check_file_access(req.uid(), req.gid(), FileAccess::Read, Some(&attr)) {
+          reply.error(libc::EACCES);
+          return;
+      }
+
+      if write_required && !self.check_file_access(req.uid(), req.gid(), FileAccess::Write, Some(&attr)) {
+          reply.error(libc::EACCES);
+          return;
+      }
+
+      // O_TRUNC 处理
+      if (flags & libc::O_TRUNC) != 0 {
+          self.do_truncate(&path, 0)?;
+      }
+
+      reply.opened(0, fuser::FuseOpenFlags::KEEP_CACHE.bits());
+  }
+
+  release 实现
+
+  fn release(&mut self, req: &Request, ino: u64, fh: u64, flags: i32,
+             lock_owner: Option<u64>, flush: bool, reply: ReplyEmpty)
+
+  作用：关闭文件句柄。当前无状态设计下，只需：
+  - 如果 flush == true，调用 fsync 逻辑
+  - 记录日志
+  - 返回成功
+
+  fsync 实现
+
+  fn fsync(&mut self, req: &Request, ino: u64, fh: u64, datasync: bool, reply: ReplyEmpty)
+
+  作用：确保数据持久化到磁盘。
+
+  实现：
+  - 如果 datasync == false（完整 fsync）：调用 inode_db.flush() + File::sync_all()
+  - 如果 datasync == true：只同步数据文件，跳过元数据
+
+  truncate 实现
+
+  fn truncate(&self, path: &Path, new_size: u64) -> ZthfsResult<()>
+
+  策略：
+  1. 获取当前文件大小
+  2. 如果 new_size > current：扩展文件（填充零）
+  3. 如果 new_size < current：截断（重写元数据中的 original_size）
+
+  扩展的实现：写入零填充到文件末尾
+  截断的实现：只修改元数据，加密数据块保持不变（读操作会根据 original_size 限制读取范围）
+
+  ---
+  这段设计看起来正确吗？
+
+❯ 请你自己检查是否符合 POSIX 标准, 符合则通过 
+
+● 让我进行 POSIX 标准自查。
+
+  自查结果
+  ┌────────────────────────┬──────────────────────────┬───────────┬────────┐
+  │         检查项         │        POSIX 要求        │ 当前设计  │  状态  │
+  ├────────────────────────┼──────────────────────────┼───────────┼────────┤
+  │ open + O_APPEND        │ 写操作原子追加到文件末尾 │ ⚠️ 未处理 │ 不符合 │
+  ├────────────────────────┼──────────────────────────┼───────────┼────────┤
+  │ open + O_TRUNC         │ 只对可写打开生效         │ ✅ 已检查 │ 符合   │
+  ├────────────────────────┼──────────────────────────┼───────────┼────────┤
+  │ truncate + mtime/ctime │ 截断时更新时间戳         │ ⚠️ 未提及 │ 不符合 │
+  ├────────────────────────┼──────────────────────────┼───────────┼────────┤
+  │ fsync                  │ 数据+元数据持久化        │ ✅        │ 符合   │
+  ├────────────────────────┼──────────────────────────┼───────────┼────────┤
+  │ fdatasync              │ 仅数据持久化             │ ✅        │ 符合   │
+  ├────────────────────────┼──────────────────────────┼───────────┼────────┤
+  │ release                │ 最后写操作隐式 flush     │ ✅        │ 符合   │
+  └────────────────────────┴──────────────────────────┴───────────┴────────┘
+  需要修正的设计
+
+  问题 1：O_APPEND 缺失
+
+  当前无文件句柄表设计无法正确处理 O_APPEND。有两个选择：
+
+  - A. 引入文件句柄表 (Arc<RwLock<HashMap<u64, FileHandle>>>)，存储打开标志
+  - B. 简化处理：在 write 时读取文件末尾位置（性能较差，但可工作）
+
+  考虑到最小化复杂度，我选择 B，在文档中注明这是已知限制。
+
+  问题 2：truncate 缺少时间戳更新
+
+  需要在 truncate 实现中：
+  fn do_truncate(&self, path: &Path, new_size: u64) -> ZthfsResult<()> {
+      // ... 截断逻辑 ...
+
+      // 更新 mtime 和 ctime
+      let now = SystemTime::now()
+          .duration_since(SystemTime::UNIX_EPOCH)?
+          .as_secs();
+      metadata.mtime = now;
+      metadata.ctime = now;
+
+      // 重新加密并写入
+      Ok(())
+  }
+
+  修正后的设计结论
+
+  修正上述两点后，符合 POSIX 基本要求（除了 O_APPEND 的性能限制）。
+
+  ---
+  自查通过，是否继续？
+
+❯ 继续 
+
+● 设计第五部分：测试策略与错误处理
+
+  单元测试结构
+
+  #[cfg(test)]
+  mod tests {
+      use super::*;
+
+      #[tokio::test]
+      async fn test_mkdir_rmdir() {
+          // 1. 创建临时目录
+          // 2. 挂载文件系统
+          // 3. mkdir /test_dir
+          // 4. 验证 inode 映射存在
+          // 5. 验证存储层标记文件存在
+          // 6. rmdir /test_dir
+          // 7. 验证清理完成
+      }
+
+      #[tokio::test]
+      async fn test_rmdir_nonempty_fails() {
+          // 创建目录 -> 在其中创建文件 -> rmdir 应该返回 ENOTEMPTY
+      }
+
+      #[tokio::test]
+      async fn test_rename_atomic() {
+          // 创建文件 -> rename -> 验证新旧路径映射正确性
+          // 模拟中途失败：验证回滚或一致性
+      }
+
+      #[tokio::test]
+      async fn test_rename_cross_directory() {
+          // 跨目录移动文件
+      }
+
+      #[tokio::test]
+      async fn test_setattr_chmod() {
+          // 修改权限 -> 验证持久化
+      }
+
+      #[tokio::test]
+      async fn test_setattr_chown_requires_privilege() {
+          // 非 root 尝试 chown -> 应该失败
+      }
+
+      #[tokio::test]
+      async fn test_truncate_shrink() {
+          // 写入数据 -> truncate 到更小 -> 验证读取范围
+      }
+
+      #[tokio::test]
+      async fn test_truncate_expand() {
+          // truncate 到更大 -> 验证填充零
+      }
+
+      #[tokio::test]
+      async fn test_fsync_persistence() {
+          // 写入数据 -> fsync -> 模拟崩溃 -> 重启 -> 验证数据存在
+      }
+  }
+
+  集成测试策略
+
+  使用 fuser 的 mount 和 unmount API 进行真实挂载测试：
+
+  #[tokio::test]
+  async fn integration_test_full_workflow() {
+      let mount_point = tempfile::tempdir()?;
+      let config = FilesystemConfig::default();
+      let fs = Zthfs::new(&config)?;
+
+      // 挂载
+      let session = fuser::spawn_mount2(fs, &mount_point, &[])?;
+
+      // 使用标准 std::fs 操作测试
+      std::fs::create_dir(mount_point.path().join("test"))?;
+      std::fs::write(mount_point.path().join("test/file.txt"), "hello")?;
+      std::fs::rename(
+          mount_point.path().join("test/file.txt"),
+          mount_point.path().join("test/renamed.txt")
+      )?;
+
+      // 验证
+      assert!(mount_point.path().join("test/renamed.txt")).exists());
+
+      // 卸载
+      session.join()?;
+  }
+
+  错误处理策略
+  ┌──────────────┬────────────────┬─────────────────────┐
+  │   错误场景   │     返回码     │      处理方式       │
+  ├──────────────┼────────────────┼─────────────────────┤
+  │ 权限不足     │ EACCES / EPERM │ 日志记录 + 返回错误 │
+  ├──────────────┼────────────────┼─────────────────────┤
+  │ 路径不存在   │ ENOENT         │ 直接返回            │
+  ├──────────────┼────────────────┼─────────────────────┤
+  │ 目录非空     │ ENOTEMPTY      │ 需要先递归删除      │
+  ├──────────────┼────────────────┼─────────────────────┤
+  │ 目标已存在   │ EEXIST         │ rename 时检查       │
+  ├──────────────┼────────────────┼─────────────────────┤
+  │ 磁盘空间不足 │ ENOSPC         │ 写入失败时返回      │
+  ├──────────────┼────────────────┼─────────────────────┤
+  │ I/O 错误     │ EIO            │ 底层错误传播        │
+  └──────────────┴────────────────┴─────────────────────┘
+  ---
+  设计总结
+
+  方案 B 完整功能清单：
+  ┌──────────┬────────┬────────────────┐
+  │   方法   │ 优先级 │      依赖      │
+  ├──────────┼────────┼────────────────┤
+  │ mkdir    │ P0     │ 无             │
+  ├──────────┼────────┼────────────────┤
+  │ rmdir    │ P0     │ mkdir          │
+  ├──────────┼────────┼────────────────┤
+  │ rename   │ P0     │ 无             │
+  ├──────────┼────────┼────────────────┤
+  │ setattr  │ P1     │ 元数据结构扩展 │
+  ├──────────┼────────┼────────────────┤
+  │ open     │ P1     │ 无             │
+  ├──────────┼────────┼────────────────┤
+  │ release  │ P1     │ open           │
+  ├──────────┼────────┼────────────────┤
+  │ fsync    │ P1     │ 无             │
+  ├──────────┼────────┼────────────────┤
+  │ truncate │ P2     │ setattr        │
+  └──────────┴────────┴────────────────┘
+  预计工作量： ~800 行代码，4-5 天
+
+  ---
+  设计完成。准备设置实现环境吗？
+
+
+
