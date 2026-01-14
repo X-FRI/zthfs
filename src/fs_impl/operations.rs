@@ -1139,6 +1139,33 @@ impl FileSystemOperations {
         Ok(())
     }
 
+    /// Sync data and metadata to disk
+    pub fn sync_all(fs: &Zthfs, path: &Path) -> ZthfsResult<()> {
+        let real_path = Self::virtual_to_real(fs, path);
+
+        if real_path.is_file() {
+            let file = std::fs::File::open(&real_path)?;
+            file.sync_all()?;
+        }
+
+        // Sync the inode database
+        fs.inode_db.flush()?;
+
+        Ok(())
+    }
+
+    /// Sync only data to disk
+    pub fn sync_data(fs: &Zthfs, path: &Path) -> ZthfsResult<()> {
+        let real_path = Self::virtual_to_real(fs, path);
+
+        if real_path.is_file() {
+            let file = std::fs::File::open(&real_path)?;
+            file.sync_data()?;
+        }
+
+        Ok(())
+    }
+
     /// Read partial file with chunked support (for FUSE read operations)
     pub fn read_partial_chunked(
         fs: &Zthfs,

@@ -7,7 +7,7 @@ use crate::fs_impl::security::{FileAccess, SecurityValidator};
 use dashmap::DashMap;
 use fuser::{
     Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry,
-    ReplyWrite, Request,
+    ReplyOpen, ReplyWrite, Request,
 };
 use sled::{Db, IVec};
 use std::ffi::OsStr;
@@ -1093,6 +1093,106 @@ impl Filesystem for Zthfs {
                 self.logger
                     .log_error("setattr", &path.to_string_lossy(), caller_uid, caller_gid, &error_msg, None)
                     .unwrap_or(());
+                reply.error(libc::EIO);
+            }
+        }
+    }
+
+    fn open(&mut self, req: &Request, ino: u64, flags: i32, reply: ReplyOpen) {
+        let uid = req.uid();
+        let gid = req.gid();
+
+        let path = match self.get_path_for_inode(ino) {
+            Some(path) => path,
+            None => {
+                reply.error(libc::ENOENT);
+                return;
+            }
+        };
+
+        let file_attr = match operations::FileSystemOperations::get_attr(self, &path) {
+            Ok(attr) => attr,
+            Err(_) => {
+                reply.error(libc::ENOENT);
+                return;
+            }
+        };
+
+        // Check read/write permissions based on flags
+        let read_required = (flags & libc::O_ACCMODE) != libc::O_WRONLY;
+        let write_required = (flags & libc::O_ACCMODE) != libc::O_RDONLY;
+
+        if read_required && !self.check_file_access(uid, gid, FileAccess::Read, Some(&file_attr)) {
+            self.log_access("open", &path.to_string_lossy(), uid, gid,
+                "permission_denied", Some("Read access denied".to_string()));
+            reply.error(libc::EACCES);
+            return;
+        }
+
+        if write_required && !self.check_file_access(uid, gid, FileAccess::Write, Some(&file_attr)) {
+            self.log_access("open", &path.to_string_lossy(), uid, gid,
+                "permission_denied", Some("Write access denied".to_string()));
+            reply.error(libc::EACCES);
+            return;
+        }
+
+        // Handle O_TRUNC
+        if (flags & libc::O_TRUNC) != 0 && write_required {
+            if let Err(e) = operations::FileSystemOperations::truncate_file(self, &path, 0) {
+                self.logger.log_error("open", &path.to_string_lossy(), uid, gid, &format!("{e}"), None).unwrap_or(());
+                reply.error(libc::EIO);
+                return;
+            }
+        }
+
+        self.logger.log_access("open", &path.to_string_lossy(), uid, gid, "success", None).unwrap_or(());
+        reply.opened(0, fuser::consts::FOPEN_KEEP_CACHE);
+    }
+
+    fn release(&mut self, req: &Request, ino: u64, _fh: u64, _flags: i32,
+               _lock_owner: Option<u64>, _flush: bool, reply: ReplyEmpty) {
+        let uid = req.uid();
+        let gid = req.gid();
+
+        let path = match self.get_path_for_inode(ino) {
+            Some(path) => path,
+            None => {
+                reply.error(libc::ENOENT);
+                return;
+            }
+        };
+
+        self.logger.log_access("release", &path.to_string_lossy(), uid, gid, "success", None).unwrap_or(());
+        reply.ok();
+    }
+
+    fn fsync(&mut self, req: &Request, ino: u64, _fh: u64, datasync: bool, reply: ReplyEmpty) {
+        let uid = req.uid();
+        let gid = req.gid();
+
+        let path = match self.get_path_for_inode(ino) {
+            Some(path) => path,
+            None => {
+                reply.error(libc::ENOENT);
+                return;
+            }
+        };
+
+        let result = if datasync {
+            // fdatasync: sync data only
+            operations::FileSystemOperations::sync_data(self, &path)
+        } else {
+            // fsync: sync data and metadata
+            operations::FileSystemOperations::sync_all(self, &path)
+        };
+
+        match result {
+            Ok(()) => {
+                self.logger.log_access("fsync", &path.to_string_lossy(), uid, gid, "success", None).unwrap_or(());
+                reply.ok();
+            }
+            Err(e) => {
+                self.logger.log_error("fsync", &path.to_string_lossy(), uid, gid, &format!("{e}"), None).unwrap_or(());
                 reply.error(libc::EIO);
             }
         }
