@@ -11,13 +11,25 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ChunkedFileMetadata {
     /// Original file size
-    size: u64,
+    pub size: u64,
     /// Number of chunks
-    chunk_count: u32,
+    pub chunk_count: u32,
     /// Chunk size used
-    chunk_size: usize,
+    pub chunk_size: usize,
     /// Last modified time
-    mtime: u64,
+    pub mtime: u64,
+    /// File permissions (POSIX mode)
+    pub mode: u32,
+    /// Owner user ID
+    pub uid: u32,
+    /// Owner group ID
+    pub gid: u32,
+    /// Last access time
+    pub atime: u64,
+    /// Metadata change time
+    pub ctime: u64,
+    /// Is this a directory?
+    pub is_dir: bool,
 }
 
 pub struct FileSystemOperations;
@@ -106,30 +118,66 @@ impl FileSystemOperations {
 
     /// Get the attributes of the specified inode (file or directory). (size, permissions, timestamps, etc.)
     pub fn get_attr(fs: &Zthfs, path: &Path) -> ZthfsResult<FileAttr> {
-        let real_path = Self::virtual_to_real(fs, path);
-        let metadata = fs::metadata(&real_path)?;
+        let metadata_path = Self::get_metadata_path(fs, path);
 
-        let kind = if metadata.is_dir() {
+        // Check if we have extended metadata
+        let (size, mtime, mode, uid, gid, atime, ctime, is_dir) = if metadata_path.exists() {
+            let meta = Self::load_metadata(fs, path)?;
+            (
+                meta.size as u64,
+                meta.mtime,
+                meta.mode,
+                meta.uid,
+                meta.gid,
+                meta.atime,
+                meta.ctime,
+                meta.is_dir,
+            )
+        } else {
+            // Fallback to filesystem metadata for non-chunked files
+            let real_path = Self::virtual_to_real(fs, path);
+            let fs_meta = fs::metadata(&real_path)?;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            (
+                fs_meta.len(),
+                now,
+                fs_meta.permissions().mode() as u32,
+                fs_meta.uid(),
+                fs_meta.gid(),
+                now,
+                now,
+                real_path.is_dir(),
+            )
+        };
+
+        let inode = Self::get_inode(fs, path)?;
+        let kind = if is_dir {
             FileType::Directory
         } else {
             FileType::RegularFile
         };
 
-        let inode = Self::get_inode(fs, path)?;
+        // Helper to convert unix seconds to SystemTime
+        let secs_to_sys_time = |secs: u64| -> std::time::SystemTime {
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs)
+        };
 
         Ok(FileAttr {
             ino: inode,
-            size: metadata.len(),
-            blocks: metadata.len().div_ceil(4096),
-            atime: metadata.accessed()?,
-            mtime: metadata.modified()?,
-            ctime: metadata.created()?,
-            crtime: metadata.created()?,
+            size,
+            blocks: size.div_ceil(4096),
+            atime: secs_to_sys_time(atime),
+            mtime: secs_to_sys_time(mtime),
+            ctime: secs_to_sys_time(ctime),
+            crtime: secs_to_sys_time(ctime),
             kind,
-            perm: metadata.permissions().mode() as u16,
+            perm: mode as u16,
             nlink: 1,
-            uid: metadata.uid(),
-            gid: metadata.gid(),
+            uid,
+            gid,
             rdev: 0,
             blksize: 4096,
             flags: 0,
@@ -677,14 +725,22 @@ impl FileSystemOperations {
         let total_chunks = data.len().div_ceil(chunk_size);
 
         // Create metadata
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
         let metadata = ChunkedFileMetadata {
             size: data.len() as u64,
             chunk_count: total_chunks as u32,
             chunk_size,
-            mtime: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            mtime: now,
+            mode: 0o644,  // Default: rw-r--r--
+            uid: unsafe { libc::getuid() } as u32,
+            gid: unsafe { libc::getgid() } as u32,
+            atime: now,
+            ctime: now,
+            is_dir: false,
         };
 
         // Write chunks
@@ -1680,5 +1736,35 @@ mod tests {
             let chunk_path = FileSystemOperations::get_chunk_path(&fs, file_path, i);
             assert!(!chunk_path.exists());
         }
+    }
+
+    #[test]
+    fn test_extended_metadata_fields() {
+        let (_temp_dir, fs) = create_test_fs();
+
+        // Test with chunked file to verify metadata is properly stored
+        let chunk_size = FileSystemOperations::get_chunk_size(&fs);
+        let large_data = vec![0x42u8; chunk_size + 1000];
+        let test_path = Path::new("/test_metadata.txt");
+
+        FileSystemOperations::write_file_chunked(&fs, test_path, &large_data).unwrap();
+
+        // Load the metadata directly to verify extended fields
+        let metadata = FileSystemOperations::load_metadata(&fs, test_path).unwrap();
+
+        // Verify new metadata fields exist
+        assert!(metadata.mode > 0, "Metadata should have mode");
+        assert!(metadata.uid > 0 || metadata.uid == 0, "Metadata should have uid");
+        assert!(metadata.gid > 0 || metadata.gid == 0, "Metadata should have gid");
+        assert!(metadata.atime > 0, "Metadata should have atime");
+        assert!(metadata.ctime > 0, "Metadata should have ctime");
+        assert!(!metadata.is_dir, "File should not be marked as directory");
+
+        // Verify get_attr uses the stored metadata
+        let attr = FileSystemOperations::get_attr(&fs, test_path).unwrap();
+        assert_eq!(attr.size, large_data.len() as u64);
+        assert!(attr.perm > 0, "File should have permissions");
+
+        FileSystemOperations::remove_file(&fs, test_path).unwrap();
     }
 }
