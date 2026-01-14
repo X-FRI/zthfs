@@ -847,4 +847,71 @@ impl Filesystem for Zthfs {
             }
         }
     }
+
+    fn rmdir(&mut self, _req: &Request, _parent: u64, name: &OsStr, reply: ReplyEmpty) {
+        let uid = _req.uid();
+        let gid = _req.gid();
+
+        // Get the parent path from inode
+        let parent_path = match self.get_path_for_inode(_parent) {
+            Some(path) => path,
+            None => {
+                self.logger
+                    .log_error(
+                        "rmdir",
+                        "unknown_parent_inode",
+                        uid,
+                        gid,
+                        "Invalid parent inode",
+                        None,
+                    )
+                    .unwrap_or(());
+                reply.error(libc::ENOENT);
+                return;
+            }
+        };
+
+        // Build the path for the directory to be removed
+        let path = parent_path.join(name);
+
+        // Check permission
+        if !self.check_permission(uid, gid) {
+            self.log_access(
+                "rmdir",
+                &path.to_string_lossy(),
+                uid,
+                gid,
+                "permission_denied",
+                Some("User not authorized".to_string()),
+            );
+            reply.error(libc::EACCES);
+            return;
+        }
+
+        match operations::FileSystemOperations::remove_directory(self, &path, false) {
+            Ok(()) => {
+                self.logger
+                    .log_access("rmdir", &path.to_string_lossy(), uid, gid, "success", None)
+                    .unwrap_or(());
+                reply.ok();
+            }
+            Err(ZthfsError::Fs(msg)) if msg.contains("not empty") => {
+                reply.error(libc::ENOTEMPTY);
+            }
+            Err(e) => {
+                let error_msg = format!("{e}");
+                self.logger
+                    .log_error(
+                        "rmdir",
+                        &path.to_string_lossy(),
+                        uid,
+                        gid,
+                        &error_msg,
+                        None,
+                    )
+                    .unwrap_or(());
+                reply.error(libc::EIO);
+            }
+        }
+    }
 }

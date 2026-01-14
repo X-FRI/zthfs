@@ -636,18 +636,95 @@ impl FileSystemOperations {
         Self::get_attr(fs, path)
     }
 
+    /// Check if a directory is empty (no children)
+    pub fn is_directory_empty(fs: &Zthfs, path: &Path) -> ZthfsResult<bool> {
+        let path_str = path.to_string_lossy();
+        let prefix = sled::IVec::from(path_str.as_bytes());
+
+        // Scan inode_db for entries with this path as prefix
+        let mut child_count = 0;
+
+        for result in fs.inode_db.scan_prefix(prefix) {
+            let (key, _) = result?;
+
+            // Skip the directory's own marker file
+            let key_str = String::from_utf8_lossy(&key);
+            if key_str == path_str {
+                continue;
+            }
+
+            // Check if this is a direct child (not a deeper descendant)
+            let relative = key_str.strip_prefix(&path_str as &str);
+            if relative.is_none() {
+                continue;
+            }
+
+            let relative = relative.unwrap();
+            // Skip if it's the directory itself (path ends with nothing or just /)
+            if relative.is_empty() || relative == "/" {
+                continue;
+            }
+
+            // Check if this is a direct child (no additional slashes except leading)
+            // relative.starts_with('/') means we need to skip the leading slash
+            let relative_path = relative.strip_prefix('/').unwrap_or(relative);
+            if relative_path.contains('/') {
+                // Deeper nested path, not direct child
+                continue;
+            }
+
+            child_count += 1;
+            if child_count > 0 {
+                return Ok(false);
+            }
+        }
+
+        // Also check the actual filesystem
+        let real_path = Self::virtual_to_real(fs, path);
+        if let Ok(entries) = fs::read_dir(&real_path) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                // Skip the directory marker file and dot entries
+                if name.to_string_lossy().ends_with(Self::DIR_MARKER_SUFFIX) {
+                    continue;
+                }
+                if name == "." || name == ".." {
+                    continue;
+                }
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
     pub fn remove_directory(fs: &Zthfs, path: &Path, recursive: bool) -> ZthfsResult<()> {
         let real_path = Self::virtual_to_real(fs, path);
 
+        // Check if directory exists
+        if !real_path.is_dir() {
+            return Err(ZthfsError::Fs("Not a directory".to_string()));
+        }
+
+        // Check if empty (unless recursive)
+        if !recursive && !Self::is_directory_empty(fs, path)? {
+            return Err(ZthfsError::Fs("Directory not empty".to_string()));
+        }
+
+        // Remove directory marker file
+        let marker_path = Self::get_dir_marker_path(fs, path);
+        let _ = fs::remove_file(&marker_path);
+
+        // Remove the actual directory
         if recursive {
             fs::remove_dir_all(&real_path)?;
         } else {
             fs::remove_dir(&real_path)?;
         }
 
-        // Also remove the directory marker file if it exists
-        let marker_path = Self::get_dir_marker_path(fs, path);
-        let _ = fs::remove_file(&marker_path); // Ignore errors if marker doesn't exist
+        // Clean up inode mappings
+        let path_str = path.to_string_lossy();
+        let _ = fs.inode_db.remove(path_str.as_bytes());
 
         Ok(())
     }
