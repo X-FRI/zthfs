@@ -48,6 +48,9 @@ impl FileSystemOperations {
     /// Metadata file suffix for storing file metadata
     const METADATA_SUFFIX: &str = ".zthfs_meta";
 
+    /// Directory marker file suffix
+    const DIR_MARKER_SUFFIX: &str = ".zthfs_dir";
+
     /// Convert the virtual path in ZTHFS to the real physical path in the underlying file system.
     /// Use fs.data_dir as the root directory, and concatenate the virtual path (remove the leading /) to form the real path under data_dir.
     /// For example, the virtual path /test/file.txt when data_dir is /var/lib/zthfs/data will be mapped to /var/lib/zthfs/data/test/file.txt.
@@ -119,10 +122,23 @@ impl FileSystemOperations {
     /// Get the attributes of the specified inode (file or directory). (size, permissions, timestamps, etc.)
     pub fn get_attr(fs: &Zthfs, path: &Path) -> ZthfsResult<FileAttr> {
         let metadata_path = Self::get_metadata_path(fs, path);
+        let dir_marker_path = Self::get_dir_marker_path(fs, path);
 
-        // Check if we have extended metadata
+        // Check if we have extended metadata (file or directory)
         let (size, mtime, mode, uid, gid, atime, ctime, is_dir) = if metadata_path.exists() {
             let meta = Self::load_metadata(fs, path)?;
+            (
+                meta.size as u64,
+                meta.mtime,
+                meta.mode,
+                meta.uid,
+                meta.gid,
+                meta.atime,
+                meta.ctime,
+                meta.is_dir,
+            )
+        } else if dir_marker_path.exists() {
+            let meta = Self::load_dir_metadata(fs, path)?;
             (
                 meta.size as u64,
                 meta.mtime,
@@ -565,15 +581,51 @@ impl FileSystemOperations {
         Ok(())
     }
 
-    pub fn create_directory(fs: &Zthfs, path: &Path, mode: u32) -> ZthfsResult<()> {
+    /// Create a directory with metadata
+    pub fn create_directory(fs: &Zthfs, path: &Path, mode: u32) -> ZthfsResult<FileAttr> {
         let real_path = Self::virtual_to_real(fs, path);
-        fs::create_dir_all(&real_path)?;
 
+        // Ensure parent directory exists
+        if let Some(parent) = real_path.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+
+        // Create the actual directory
+        fs::create_dir(&real_path)?;
+
+        // Create directory marker file with metadata
+        let marker_path = Self::get_dir_marker_path(fs, path);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let metadata = ChunkedFileMetadata {
+            size: 0,
+            chunk_count: 0,
+            chunk_size: 0,
+            mtime: now,
+            mode,
+            uid: unsafe { libc::getuid() } as u32,
+            gid: unsafe { libc::getgid() } as u32,
+            atime: now,
+            ctime: now,
+            is_dir: true,
+        };
+
+        let json = serde_json::to_string(&metadata)
+            .map_err(|e| ZthfsError::Serialization(e.to_string()))?;
+        fs::write(&marker_path, json)?;
+
+        // Set directory permissions
         let mut perms = fs::metadata(&real_path)?.permissions();
         perms.set_mode(mode);
         fs::set_permissions(&real_path, perms)?;
 
-        Ok(())
+        // Get and return attributes
+        Self::get_attr(fs, path)
     }
 
     pub fn remove_directory(fs: &Zthfs, path: &Path, recursive: bool) -> ZthfsResult<()> {
@@ -603,6 +655,12 @@ impl FileSystemOperations {
         real_path.with_extension(Self::METADATA_SUFFIX)
     }
 
+    /// Get directory marker file path
+    fn get_dir_marker_path(fs: &Zthfs, path: &Path) -> PathBuf {
+        let real_path = Self::virtual_to_real(fs, path);
+        real_path.with_extension(Self::DIR_MARKER_SUFFIX)
+    }
+
     /// Save file metadata
     fn save_metadata(fs: &Zthfs, path: &Path, metadata: &ChunkedFileMetadata) -> ZthfsResult<()> {
         let metadata_path = Self::get_metadata_path(fs, path);
@@ -616,6 +674,15 @@ impl FileSystemOperations {
     fn load_metadata(fs: &Zthfs, path: &Path) -> ZthfsResult<ChunkedFileMetadata> {
         let metadata_path = Self::get_metadata_path(fs, path);
         let json = fs::read_to_string(&metadata_path)?;
+        let metadata: ChunkedFileMetadata =
+            serde_json::from_str(&json).map_err(|e| ZthfsError::Serialization(e.to_string()))?;
+        Ok(metadata)
+    }
+
+    /// Load directory metadata from marker file
+    fn load_dir_metadata(fs: &Zthfs, path: &Path) -> ZthfsResult<ChunkedFileMetadata> {
+        let marker_path = Self::get_dir_marker_path(fs, path);
+        let json = fs::read_to_string(&marker_path)?;
         let metadata: ChunkedFileMetadata =
             serde_json::from_str(&json).map_err(|e| ZthfsError::Serialization(e.to_string()))?;
         Ok(metadata)

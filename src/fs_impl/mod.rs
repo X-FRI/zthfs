@@ -773,4 +773,73 @@ impl Filesystem for Zthfs {
             }
         }
     }
+
+    fn mkdir(&mut self, _req: &Request, _parent: u64, name: &OsStr, mode: u32, _umask: u32, reply: ReplyEntry) {
+        let uid = _req.uid();
+        let gid = _req.gid();
+
+        // Get the parent path from inode
+        let parent_path = {
+            match self.get_path_for_inode(_parent) {
+                Some(path) => path,
+                None => {
+                    self.logger
+                        .log_error(
+                            "mkdir",
+                            "unknown_parent_inode",
+                            uid,
+                            gid,
+                            "Invalid parent inode",
+                            None,
+                        )
+                        .unwrap_or(());
+                    reply.error(libc::ENOENT);
+                    return;
+                }
+            }
+        };
+
+        // Build the path for the new directory
+        let path = parent_path.join(name);
+
+        // Check permission
+        if !self.check_permission(uid, gid) {
+            self.log_access(
+                "mkdir",
+                &path.to_string_lossy(),
+                uid,
+                gid,
+                "permission_denied",
+                Some("User not authorized".to_string()),
+            );
+            reply.error(libc::EACCES);
+            return;
+        }
+
+        // Apply umask to mode
+        let effective_mode = mode & !_umask;
+
+        match operations::FileSystemOperations::create_directory(self, &path, effective_mode) {
+            Ok(attr) => {
+                self.logger
+                    .log_access("mkdir", &path.to_string_lossy(), uid, gid, "success", None)
+                    .unwrap_or(());
+                reply.entry(&TTL, &attr, 0);
+            }
+            Err(e) => {
+                let error_msg = format!("{e}");
+                self.logger
+                    .log_error(
+                        "mkdir",
+                        &path.to_string_lossy(),
+                        uid,
+                        gid,
+                        &error_msg,
+                        None,
+                    )
+                    .unwrap_or(());
+                reply.error(libc::EIO);
+            }
+        }
+    }
 }
