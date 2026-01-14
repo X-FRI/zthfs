@@ -744,19 +744,19 @@ impl FileSystemOperations {
     }
 
     /// Get metadata file path for a chunked file
-    fn get_metadata_path(fs: &Zthfs, path: &Path) -> PathBuf {
+    pub fn get_metadata_path(fs: &Zthfs, path: &Path) -> PathBuf {
         let real_path = Self::virtual_to_real(fs, path);
         real_path.with_extension(Self::METADATA_SUFFIX)
     }
 
     /// Get directory marker file path
-    fn get_dir_marker_path(fs: &Zthfs, path: &Path) -> PathBuf {
+    pub fn get_dir_marker_path(fs: &Zthfs, path: &Path) -> PathBuf {
         let real_path = Self::virtual_to_real(fs, path);
         real_path.with_extension(Self::DIR_MARKER_SUFFIX)
     }
 
     /// Save file metadata
-    fn save_metadata(fs: &Zthfs, path: &Path, metadata: &ChunkedFileMetadata) -> ZthfsResult<()> {
+    pub fn save_metadata(fs: &Zthfs, path: &Path, metadata: &ChunkedFileMetadata) -> ZthfsResult<()> {
         let metadata_path = Self::get_metadata_path(fs, path);
         let json = serde_json::to_string(metadata)
             .map_err(|e| ZthfsError::Serialization(e.to_string()))?;
@@ -765,7 +765,7 @@ impl FileSystemOperations {
     }
 
     /// Load file metadata
-    fn load_metadata(fs: &Zthfs, path: &Path) -> ZthfsResult<ChunkedFileMetadata> {
+    pub fn load_metadata(fs: &Zthfs, path: &Path) -> ZthfsResult<ChunkedFileMetadata> {
         let metadata_path = Self::get_metadata_path(fs, path);
         let json = fs::read_to_string(&metadata_path)?;
         let metadata: ChunkedFileMetadata =
@@ -774,7 +774,7 @@ impl FileSystemOperations {
     }
 
     /// Load directory metadata from marker file
-    fn load_dir_metadata(fs: &Zthfs, path: &Path) -> ZthfsResult<ChunkedFileMetadata> {
+    pub fn load_dir_metadata(fs: &Zthfs, path: &Path) -> ZthfsResult<ChunkedFileMetadata> {
         let marker_path = Self::get_dir_marker_path(fs, path);
         let json = fs::read_to_string(&marker_path)?;
         let metadata: ChunkedFileMetadata =
@@ -783,7 +783,7 @@ impl FileSystemOperations {
     }
 
     /// Get chunk path for a specific chunk
-    fn get_chunk_path(fs: &Zthfs, path: &Path, chunk_index: u32) -> PathBuf {
+    pub fn get_chunk_path(fs: &Zthfs, path: &Path, chunk_index: u32) -> PathBuf {
         let real_path = Self::virtual_to_real(fs, path);
         real_path.with_extension(format!("{chunk_index}.chunk"))
     }
@@ -998,6 +998,134 @@ impl FileSystemOperations {
 
         // Update in-memory cache
         fs.inodes.insert(inode_num, dst_path.to_path_buf());
+
+        Ok(())
+    }
+
+    /// Set file attributes (mode, uid, gid, size, mtime)
+    pub fn set_file_attributes(
+        fs: &Zthfs,
+        path: &Path,
+        mode: Option<u32>,
+        uid: Option<u32>,
+        gid: Option<u32>,
+        size: Option<u64>,
+        mtime: Option<u64>,
+    ) -> ZthfsResult<()> {
+        let metadata_path = Self::get_metadata_path(fs, path);
+        let dir_marker_path = Self::get_dir_marker_path(fs, path);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let mut updated = false;
+
+        if metadata_path.exists() {
+            // File with extended metadata
+            let mut metadata = Self::load_metadata(fs, path)?;
+
+            if let Some(new_mode) = mode {
+                metadata.mode = new_mode;
+                updated = true;
+            }
+            if let Some(new_uid) = uid {
+                metadata.uid = new_uid;
+                updated = true;
+            }
+            if let Some(new_gid) = gid {
+                metadata.gid = new_gid;
+                updated = true;
+            }
+            if let Some(new_mtime) = mtime {
+                metadata.mtime = new_mtime;
+                updated = true;
+            }
+
+            // Always update ctime when attributes change
+            metadata.ctime = now;
+            updated = true;
+
+            if updated {
+                Self::save_metadata(fs, path, &metadata)?;
+            }
+
+            // Handle truncate via size
+            if let Some(new_size) = size {
+                if new_size != metadata.size {
+                    Self::truncate_file(fs, path, new_size)?;
+                }
+            }
+        } else if dir_marker_path.exists() {
+            // Directory with metadata
+            let mut metadata = Self::load_dir_metadata(fs, path)?;
+
+            if let Some(new_mode) = mode {
+                metadata.mode = new_mode;
+                updated = true;
+            }
+            if let Some(new_uid) = uid {
+                metadata.uid = new_uid;
+                updated = true;
+            }
+            if let Some(new_gid) = gid {
+                metadata.gid = new_gid;
+                updated = true;
+            }
+            if let Some(new_mtime) = mtime {
+                metadata.mtime = new_mtime;
+                updated = true;
+            }
+            metadata.ctime = now;
+            updated = true;
+
+            if updated {
+                let json = serde_json::to_string(&metadata)
+                    .map_err(|e| ZthfsError::Serialization(e.to_string()))?;
+                fs::write(&dir_marker_path, json)?;
+            }
+        }
+
+        // Also update filesystem permissions
+        let real_path = Self::virtual_to_real(fs, path);
+        if real_path.exists() {
+            if let Some(new_mode) = mode {
+                let mut perms = fs::metadata(&real_path)?.permissions();
+                perms.set_mode(new_mode);
+                fs::set_permissions(&real_path, perms)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Truncate file to specified size
+    pub fn truncate_file(fs: &Zthfs, path: &Path, new_size: u64) -> ZthfsResult<()> {
+        let metadata_path = Self::get_metadata_path(fs, path);
+
+        if metadata_path.exists() {
+            let mut metadata = Self::load_metadata(fs, path)?;
+
+            if new_size < metadata.size {
+                // Truncate: just update metadata size
+                // Read operations will respect the new size
+                metadata.size = new_size;
+                Self::save_metadata(fs, path, &metadata)?;
+            } else if new_size > metadata.size {
+                // Extend: write zeros at the end
+                let current_data = Self::read_file_chunked(fs, path)?;
+                let mut extended_data = vec![0u8; new_size as usize];
+                extended_data[..current_data.len()].copy_from_slice(&current_data);
+                Self::write_file_chunked(fs, path, &extended_data)?;
+            }
+        } else {
+            // Regular file - read, truncate/extend, write back
+            let current_data = Self::read_file(fs, path).unwrap_or_default();
+            let mut new_data = vec![0u8; new_size as usize];
+            let copy_len = std::cmp::min(current_data.len(), new_data.len());
+            new_data[..copy_len].copy_from_slice(&current_data[..copy_len]);
+            Self::write_file(fs, path, &new_data)?;
+        }
 
         Ok(())
     }
