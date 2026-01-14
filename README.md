@@ -7,13 +7,13 @@
 
 ZTHFS is a transparent encryption filesystem designed for medical data protection. The project implements cryptographic primitives and security mechanisms required for building a HIPAA/GDPR-compliant storage system.
 
-**Current Status**: The project provides a security library with filesystem operation helpers. FUSE integration remains incomplete, meaning the filesystem cannot be mounted for actual use.
+**Current Status**: The project provides a security library with full FUSE integration. The filesystem can be mounted and used for encrypted file storage with transparent encryption/decryption.
 
 ## Architecture
 
 The system comprises eight core modules. Encryption and integrity modules form the cryptographic foundation. The security module implements access control and audit logging. Transaction management provides atomic operations and crash recovery. Key management handles secure storage and rotation of cryptographic keys.
 
-File operations are implemented as standalone functions in `operations.rs`. These functions support chunked storage for large files, partial write operations, and inode-based file tracking. However, the FUSE filesystem trait is not implemented, so these operations cannot be accessed through a mounted filesystem.
+File operations are implemented through a full FUSE filesystem implementation in `fuse.rs`. The filesystem supports chunked storage for large files, partial write operations, and inode-based file tracking. All operations are accessible through a standard mounted filesystem with transparent encryption/decryption.
 
 ## Cryptographic Security
 
@@ -69,7 +69,7 @@ The binary provides seven subcommands:
 
 - `init` generates a configuration file with random keys
 - `validate` checks configuration file syntax and security settings
-- `mount` attempts FUSE mounting (currently non-functional)
+- `mount` mounts the FUSE filesystem with the specified configuration
 - `unmount` unmounts a mounted filesystem
 - `health` displays component status
 - `demo` runs a demonstration of cryptographic operations
@@ -83,15 +83,34 @@ Run tests with `cargo test --lib`. Integration tests and FUSE filesystem tests a
 
 ## Implementation Status
 
-Complete modules: encryption, integrity, logging, configuration, security validation, transactions, key management.
+### FUSE Operations
 
-Partial implementation: filesystem operations exist as functions but lack FUSE integration.
+| Operation | Status | Notes |
+|-----------|--------|-------|
+| lookup | ✅ Implemented | Path resolution with permission check |
+| getattr | ✅ Implemented | File attributes with extended metadata |
+| read | ✅ Implemented | Chunked reading with decryption |
+| write | ✅ Implemented | Partial write support |
+| readdir | ✅ Implemented | Directory listing |
+| create | ✅ Implemented | File creation |
+| unlink | ✅ Implemented | File deletion |
+| mkdir | ✅ Implemented | Directory creation with marker file |
+| rmdir | ✅ Implemented | Empty directory removal |
+| rename | ✅ Implemented | Atomic cross-directory rename |
+| setattr | ✅ Implemented | chmod, chown, utime, truncate |
+| open | ✅ Implemented | Permission-based access control |
+| release | ✅ Implemented | Handle release |
+| fsync | ✅ Implemented | Data and metadata sync |
 
-Not implemented: FUSE filesystem trait, HSM/KMS backends (feature flags exist but are empty), performance monitoring, integration tests.
+### Module Status
+
+Complete modules: encryption, integrity, logging, configuration, security validation, transactions, key management, FUSE filesystem.
+
+Not implemented: HSM/KMS backends (feature flags exist but are empty), performance monitoring, integration tests.
 
 ## Development Roadmap
 
-Short-term priorities include completing FUSE filesystem integration and adding integration tests. Medium-term goals cover HSM/KMS backends and production deployment tooling. Long-term objectives target distributed storage and multi-tenant isolation.
+Short-term priorities include adding integration tests and production deployment tooling. Medium-term goals cover HSM/KMS backends. Long-term objectives target distributed storage and multi-tenant isolation.
 
 ## License
 
