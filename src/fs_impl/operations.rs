@@ -449,6 +449,13 @@ impl FileSystemOperations {
         for (i, entry) in entries_vec.into_iter().enumerate().skip(offset as usize) {
             if let Ok(entry) = entry {
                 let file_name = entry.file_name();
+
+                // Filter out ZTHFS internal metadata files and directory markers
+                let file_name_str = file_name.to_string_lossy();
+                if file_name_str.ends_with(Self::METADATA_SUFFIX) || file_name_str.ends_with(Self::DIR_MARKER_SUFFIX) {
+                    continue;
+                }
+
                 let file_type = if entry.file_type().unwrap().is_dir() {
                     FileType::Directory
                 } else {
@@ -525,9 +532,10 @@ impl FileSystemOperations {
     pub fn path_exists(fs: &Zthfs, path: &Path) -> bool {
         let real_path = Self::virtual_to_real(fs, path);
         let metadata_path = Self::get_metadata_path(fs, path);
+        let dir_marker_path = Self::get_dir_marker_path(fs, path);
 
-        // Check if it's a chunked file or regular file
-        metadata_path.exists() || real_path.exists()
+        // Check if it's a chunked file, directory, or regular file
+        metadata_path.exists() || dir_marker_path.exists() || real_path.exists()
     }
 
     pub fn get_file_size(fs: &Zthfs, path: &Path) -> ZthfsResult<u64> {
@@ -636,6 +644,10 @@ impl FileSystemOperations {
         } else {
             fs::remove_dir(&real_path)?;
         }
+
+        // Also remove the directory marker file if it exists
+        let marker_path = Self::get_dir_marker_path(fs, path);
+        let _ = fs::remove_file(&marker_path); // Ignore errors if marker doesn't exist
 
         Ok(())
     }

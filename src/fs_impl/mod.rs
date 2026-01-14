@@ -838,7 +838,12 @@ impl Filesystem for Zthfs {
                         None,
                     )
                     .unwrap_or(());
-                reply.error(libc::EIO);
+                // Return appropriate POSIX error code
+                let error_code = match &e {
+                    ZthfsError::Io(io_err) if io_err.kind() == std::io::ErrorKind::AlreadyExists => libc::EEXIST,
+                    _ => libc::EIO,
+                };
+                reply.error(error_code);
             }
         }
     }
