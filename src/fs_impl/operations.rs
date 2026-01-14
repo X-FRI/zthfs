@@ -722,8 +722,18 @@ impl FileSystemOperations {
             fs::remove_dir(&real_path)?;
         }
 
-        // Clean up inode mappings
+        // Clean up bidirectional inode mappings
         let path_str = path.to_string_lossy();
+
+        // Get the inode before removing (to clean up reverse mapping)
+        if let Ok(inode) = Self::get_inode(fs, path) {
+            // Remove inode -> path reverse mapping
+            let _ = fs.inode_db.remove(&inode.to_be_bytes());
+            // Remove from in-memory cache
+            fs.inodes.remove(&inode);
+        }
+
+        // Remove path -> inode mapping
         let _ = fs.inode_db.remove(path_str.as_bytes());
 
         Ok(())
