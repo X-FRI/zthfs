@@ -898,6 +898,9 @@ impl Filesystem for Zthfs {
             Err(ZthfsError::Fs(msg)) if msg.contains("not empty") => {
                 reply.error(libc::ENOTEMPTY);
             }
+            Err(ZthfsError::Fs(msg)) if msg.contains("Not a directory") => {
+                reply.error(libc::ENOTDIR);
+            }
             Err(e) => {
                 let error_msg = format!("{e}");
                 self.logger

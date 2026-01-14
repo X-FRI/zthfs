@@ -642,8 +642,6 @@ impl FileSystemOperations {
         let prefix = sled::IVec::from(path_str.as_bytes());
 
         // Scan inode_db for entries with this path as prefix
-        let mut child_count = 0;
-
         for result in fs.inode_db.scan_prefix(prefix) {
             let (key, _) = result?;
 
@@ -673,10 +671,7 @@ impl FileSystemOperations {
                 continue;
             }
 
-            child_count += 1;
-            if child_count > 0 {
-                return Ok(false);
-            }
+            return Ok(false);
         }
 
         // Also check the actual filesystem
@@ -728,7 +723,7 @@ impl FileSystemOperations {
         // Get the inode before removing (to clean up reverse mapping)
         if let Ok(inode) = Self::get_inode(fs, path) {
             // Remove inode -> path reverse mapping
-            let _ = fs.inode_db.remove(&inode.to_be_bytes());
+            let _ = fs.inode_db.remove(inode.to_be_bytes());
             // Remove from in-memory cache
             fs.inodes.remove(&inode);
         }
