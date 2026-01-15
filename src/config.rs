@@ -523,4 +523,290 @@ mod tests {
         assert!(!config.is_insecure_default());
         assert!(config.validate_for_production().is_ok());
     }
+
+    #[test]
+    fn test_validate_for_production_with_badcoffe_nonce() {
+        // BADCOFFE nonce seed should fail
+        let config = EncryptionConfig {
+            key: EncryptionConfig::generate_key().to_vec(), // Valid key
+            nonce_seed: vec![
+                0xBA, 0xDC, 0x0F, 0xFE, 0xBA, 0xDC, 0x0F, 0xFE, 0xBA, 0xDC, 0x0F, 0xFE,
+            ],
+        };
+        assert!(config.validate_for_production().is_err());
+        let err = config.validate_for_production().unwrap_err();
+        assert!(err.to_string().contains("BADCOFFE"));
+    }
+
+    #[test]
+    fn test_from_file_not_found() {
+        let result = FilesystemConfig::from_file("/nonexistent/path/config.json");
+        assert!(result.is_err());
+        if let Err(ZthfsError::Config(msg)) = result {
+            assert!(msg.contains("Failed to read config file"));
+        } else {
+            panic!("Expected Config error");
+        }
+    }
+
+    #[test]
+    fn test_from_file_invalid_json() {
+        let temp_dir = tempdir().unwrap();
+        let config_path = temp_dir.path().join("invalid.json");
+
+        // Write invalid JSON
+        std::fs::write(&config_path, "{ invalid json }").unwrap();
+
+        let result = FilesystemConfig::from_file(&config_path);
+        assert!(result.is_err());
+        if let Err(ZthfsError::Config(msg)) = result {
+            assert!(msg.contains("Failed to parse config"));
+        } else {
+            panic!("Expected Config error");
+        }
+    }
+
+    #[test]
+    fn test_save_to_file_invalid_path() {
+        let config = FilesystemConfig::default();
+
+        // Try to save to an invalid path (non-existent directory with restrictive permissions)
+        let result = config.save_to_file("/root/nonexistent/config.json");
+        assert!(result.is_err());
+        if let Err(ZthfsError::Config(msg)) = result {
+            assert!(msg.contains("Failed to write config file"));
+        } else {
+            panic!("Expected Config error");
+        }
+    }
+
+    #[test]
+    fn test_validate_empty_mount_point() {
+        let config = FilesystemConfig {
+            mount_point: String::new(),
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+        match config.validate() {
+            Err(ZthfsError::Config(msg)) => assert!(msg.contains("Mount point")),
+            _ => panic!("Expected Config error about Mount point"),
+        }
+    }
+
+    #[test]
+    fn test_validate_invalid_encryption_key_length() {
+        let config = FilesystemConfig {
+            data_dir: "/tmp/test".to_string(),
+            mount_point: "/mnt/test".to_string(),
+            encryption: EncryptionConfig {
+                key: vec![1u8; 16], // Wrong length
+                nonce_seed: vec![2u8; 12],
+            },
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+        match config.validate() {
+            Err(ZthfsError::Config(msg)) => assert!(msg.contains("32 bytes")),
+            _ => panic!("Expected Config error about 32 bytes"),
+        }
+    }
+
+    #[test]
+    fn test_validate_invalid_nonce_seed_length() {
+        let config = FilesystemConfig {
+            data_dir: "/tmp/test".to_string(),
+            mount_point: "/mnt/test".to_string(),
+            encryption: EncryptionConfig {
+                key: vec![1u8; 32],
+                nonce_seed: vec![2u8; 8], // Wrong length
+            },
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+        match config.validate() {
+            Err(ZthfsError::Config(msg)) => assert!(msg.contains("12 bytes")),
+            _ => panic!("Expected Config error about 12 bytes"),
+        }
+    }
+
+    #[test]
+    fn test_validate_logging_enabled_with_empty_path() {
+        let config = FilesystemConfig {
+            data_dir: "/tmp/test".to_string(),
+            mount_point: "/mnt/test".to_string(),
+            encryption: EncryptionConfig::with_random_keys(),
+            logging: LogConfig {
+                enabled: true,
+                file_path: String::new(), // Empty path when logging is enabled
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+        match config.validate() {
+            Err(ZthfsError::Config(msg)) => assert!(msg.contains("Log file path")),
+            _ => panic!("Expected Config error about Log file path"),
+        }
+    }
+
+    #[test]
+    fn test_validate_integrity_key_length_for_blake3() {
+        let config = FilesystemConfig {
+            data_dir: "/tmp/test".to_string(),
+            mount_point: "/mnt/test".to_string(),
+            encryption: EncryptionConfig::with_random_keys(),
+            integrity: IntegrityConfig {
+                enabled: true,
+                algorithm: "blake3".to_string(),
+                key: vec![1u8; 16], // Wrong length for BLAKE3
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
+        match config.validate() {
+            Err(ZthfsError::Config(msg)) => assert!(msg.contains("32 bytes for BLAKE3")),
+            _ => panic!("Expected Config error about 32 bytes for BLAKE3"),
+        }
+    }
+
+    #[test]
+    fn test_validate_with_production_checks() {
+        let config = FilesystemConfig {
+            data_dir: "/tmp/test".to_string(),
+            mount_point: "/mnt/test".to_string(),
+            encryption: EncryptionConfig::default(), // Insecure default
+            ..Default::default()
+        };
+
+        // validate() should pass
+        assert!(config.validate().is_ok());
+
+        // validate_with_production_checks() should fail due to insecure default
+        assert!(config.validate_with_production_checks().is_err());
+        match config.validate_with_production_checks() {
+            Err(ZthfsError::Config(msg)) => assert!(msg.contains("DEADBEEF")),
+            _ => panic!("Expected Config error about DEADBEEF"),
+        }
+    }
+
+    #[test]
+    fn test_validate_with_production_checks_success() {
+        let config = FilesystemConfig {
+            data_dir: "/tmp/test".to_string(),
+            mount_point: "/mnt/test".to_string(),
+            encryption: EncryptionConfig::with_random_keys(), // Secure random keys
+            ..Default::default()
+        };
+
+        // Both validations should pass
+        assert!(config.validate().is_ok());
+        assert!(config.validate_with_production_checks().is_ok());
+    }
+
+    #[test]
+    fn test_encryption_config_new() {
+        let key = vec![1u8; 32];
+        let nonce_seed = vec![2u8; 12];
+        let config = EncryptionConfig::new(key.clone(), nonce_seed.clone());
+
+        assert_eq!(config.key, key);
+        assert_eq!(config.nonce_seed, nonce_seed);
+    }
+
+    #[test]
+    fn test_integrity_config_new() {
+        let config = IntegrityConfig::new();
+        assert!(config.enabled);
+        assert_eq!(config.algorithm, "blake3");
+        assert_eq!(config.xattr_namespace, "user.zthfs");
+        assert_eq!(config.key.len(), 32);
+    }
+
+    #[test]
+    fn test_integrity_config_with_key() {
+        let key = vec![42u8; 32];
+        let config = IntegrityConfig::with_key(key.clone());
+
+        assert!(config.enabled);
+        assert_eq!(config.algorithm, "blake3");
+        assert_eq!(config.xattr_namespace, "user.zthfs");
+        assert_eq!(config.key, key);
+    }
+
+    #[test]
+    fn test_log_config_default() {
+        let config = LogConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.file_path, "/var/log/zthfs/access.log");
+        assert_eq!(config.level, "info");
+        assert_eq!(config.max_size, 10 * 1024 * 1024);
+        assert_eq!(config.rotation_count, 5);
+    }
+
+    #[test]
+    fn test_performance_config_default() {
+        let config = PerformanceConfig::default();
+        assert_eq!(config.cache_size, 1000);
+        assert_eq!(config.max_concurrent_ops, 100);
+        assert_eq!(config.block_size, 4096);
+        assert_eq!(config.prefetch_size, 8192);
+        assert_eq!(config.chunk_size, 4 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_security_config_default() {
+        let config = SecurityConfig::default();
+        assert_eq!(config.allowed_users, vec![0]);
+        assert_eq!(config.allowed_groups, vec![0]);
+        assert_eq!(config.encryption_strength, "high");
+        assert_eq!(config.access_control_level, "strict");
+    }
+
+    #[test]
+    fn test_config_builder_all_methods() {
+        let temp_dir = tempdir().unwrap();
+        let data_dir = temp_dir.path().to_string_lossy().to_string();
+
+        let config = FilesystemConfigBuilder::new()
+            .data_dir(data_dir.clone())
+            .mount_point("/mnt/test".to_string())
+            .encryption(EncryptionConfig::with_random_keys())
+            .logging(LogConfig::default())
+            .integrity(IntegrityConfig::new())
+            .performance(PerformanceConfig::default())
+            .security(SecurityConfig::default())
+            .build()
+            .unwrap();
+
+        assert_eq!(config.data_dir, data_dir);
+        assert_eq!(config.mount_point, "/mnt/test");
+    }
+
+    #[test]
+    fn test_encryption_config_default() {
+        let config = EncryptionConfig::default();
+        assert_eq!(config.key.len(), 32);
+        assert_eq!(config.nonce_seed.len(), 12);
+        assert!(config.is_insecure_default());
+    }
+
+    #[test]
+    fn test_is_insecure_default_with_custom_key() {
+        let config = EncryptionConfig {
+            key: EncryptionConfig::generate_key().to_vec(),
+            nonce_seed: EncryptionConfig::generate_nonce_seed().to_vec(),
+        };
+        assert!(!config.is_insecure_default());
+    }
+
+    #[test]
+    fn test_is_insecure_default_partial_match() {
+        // Key matches default but nonce doesn't
+        let config = EncryptionConfig {
+            key: [0xDE, 0xAD, 0xBE, 0xEF].repeat(8).to_vec(),
+            nonce_seed: EncryptionConfig::generate_nonce_seed().to_vec(),
+        };
+        assert!(!config.is_insecure_default()); // Both must match
+    }
 }

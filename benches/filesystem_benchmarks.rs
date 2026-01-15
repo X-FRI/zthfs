@@ -3,8 +3,7 @@ use std::path::Path;
 use tempfile::tempdir;
 use zthfs::{
     config::{FilesystemConfigBuilder, LogConfig},
-    fs_impl::Zthfs,
-    operations::FileSystemOperations,
+    fs_impl::{Zthfs, attr_ops, chunk_ops, dir_modify, dir_read, file_read, file_write, path_ops},
 };
 
 fn create_test_filesystem() -> (Zthfs, tempfile::TempDir) {
@@ -38,14 +37,12 @@ fn bench_file_read_1kb(c: &mut Criterion) {
     let test_data = vec![0u8; 1024]; // 1KB of data
 
     // Write test data first
-    FileSystemOperations::write_file(&fs, test_path, &test_data).unwrap();
+    file_write::write_file(&fs, test_path, &test_data).unwrap();
 
     c.bench_function("file_read_1kb", |b| {
         b.iter(|| {
-            let _ = FileSystemOperations::read_file(
-                std::hint::black_box(&fs),
-                std::hint::black_box(test_path),
-            );
+            let _ =
+                file_read::read_file(std::hint::black_box(&fs), std::hint::black_box(test_path));
         })
     });
 }
@@ -58,7 +55,7 @@ fn bench_file_write_1kb(c: &mut Criterion) {
 
     c.bench_function("file_write_1kb", |b| {
         b.iter(|| {
-            let _ = FileSystemOperations::write_file(
+            let _ = file_write::write_file(
                 std::hint::black_box(&fs),
                 std::hint::black_box(test_path),
                 std::hint::black_box(&test_data),
@@ -74,14 +71,12 @@ fn bench_file_read_1mb(c: &mut Criterion) {
     let test_data = vec![0u8; 1024 * 1024]; // 1MB of data
 
     // Write test data first
-    FileSystemOperations::write_file(&fs, test_path, &test_data).unwrap();
+    file_write::write_file(&fs, test_path, &test_data).unwrap();
 
     c.bench_function("file_read_1mb", |b| {
         b.iter(|| {
-            let _ = FileSystemOperations::read_file(
-                std::hint::black_box(&fs),
-                std::hint::black_box(test_path),
-            );
+            let _ =
+                file_read::read_file(std::hint::black_box(&fs), std::hint::black_box(test_path));
         })
     });
 }
@@ -94,7 +89,7 @@ fn bench_file_write_1mb(c: &mut Criterion) {
 
     c.bench_function("file_write_1mb", |b| {
         b.iter(|| {
-            let _ = FileSystemOperations::write_file(
+            let _ = file_write::write_file(
                 std::hint::black_box(&fs),
                 std::hint::black_box(test_path),
                 std::hint::black_box(&test_data),
@@ -108,14 +103,12 @@ fn bench_get_file_size_1kb(c: &mut Criterion) {
 
     let test_path = Path::new("/test_size.txt");
     let test_data = vec![0u8; 1024]; // 1KB of data
-    FileSystemOperations::write_file(&fs, test_path, &test_data).unwrap();
+    file_write::write_file(&fs, test_path, &test_data).unwrap();
 
     c.bench_function("get_file_size_1kb", |b| {
         b.iter(|| {
-            let _ = FileSystemOperations::get_file_size(
-                std::hint::black_box(&fs),
-                std::hint::black_box(test_path),
-            );
+            let _ =
+                path_ops::get_file_size(std::hint::black_box(&fs), std::hint::black_box(test_path));
         })
     });
 }
@@ -125,14 +118,12 @@ fn bench_get_file_size_10mb(c: &mut Criterion) {
 
     let test_path = Path::new("/test_size.txt");
     let test_data = vec![0u8; 1024 * 1024 * 10]; // 10MB of data
-    FileSystemOperations::write_file(&fs, test_path, &test_data).unwrap();
+    file_write::write_file(&fs, test_path, &test_data).unwrap();
 
     c.bench_function("get_file_size_10mb", |b| {
         b.iter(|| {
-            let _ = FileSystemOperations::get_file_size(
-                std::hint::black_box(&fs),
-                std::hint::black_box(test_path),
-            );
+            let _ =
+                path_ops::get_file_size(std::hint::black_box(&fs), std::hint::black_box(test_path));
         })
     });
 }
@@ -142,14 +133,12 @@ fn bench_path_exists_check(c: &mut Criterion) {
 
     let test_path = Path::new("/test_exists.txt");
     let test_data = b"test data".to_vec();
-    FileSystemOperations::write_file(&fs, test_path, &test_data).unwrap();
+    file_write::write_file(&fs, test_path, &test_data).unwrap();
 
     c.bench_function("path_exists_check", |b| {
         b.iter(|| {
-            let _ = FileSystemOperations::path_exists(
-                std::hint::black_box(&fs),
-                std::hint::black_box(test_path),
-            );
+            let _ =
+                path_ops::path_exists(std::hint::black_box(&fs), std::hint::black_box(test_path));
         })
     });
 }
@@ -162,11 +151,11 @@ fn bench_chunked_file_operations(c: &mut Criterion) {
     let chunked_data = vec![0xAAu8; 8 * 1024 * 1024]; // 8MB
 
     // Write chunked file
-    FileSystemOperations::write_file_chunked(&fs, chunked_path, &chunked_data).unwrap();
+    chunk_ops::write_file_chunked(&fs, chunked_path, &chunked_data).unwrap();
 
     c.bench_function("chunked_file_read_8mb", |b| {
         b.iter(|| {
-            let _ = FileSystemOperations::read_file_chunked(
+            let _ = chunk_ops::read_file_chunked(
                 std::hint::black_box(&fs),
                 std::hint::black_box(chunked_path),
             );
@@ -200,11 +189,11 @@ fn bench_file_operations_by_size(c: &mut Criterion) {
         let test_data = vec![0x42u8; size];
 
         // Pre-write file for read benchmarks
-        FileSystemOperations::write_file(&fs, test_path, &test_data).unwrap();
+        file_write::write_file(&fs, test_path, &test_data).unwrap();
 
         group.bench_function(format!("read_{label}"), |b| {
             b.iter(|| {
-                let _ = FileSystemOperations::read_file(
+                let _ = file_read::read_file(
                     std::hint::black_box(&fs),
                     std::hint::black_box(test_path),
                 );
@@ -213,7 +202,7 @@ fn bench_file_operations_by_size(c: &mut Criterion) {
 
         group.bench_function(format!("get_size_{label}"), |b| {
             b.iter(|| {
-                let _ = FileSystemOperations::get_file_size(
+                let _ = path_ops::get_file_size(
                     std::hint::black_box(&fs),
                     std::hint::black_box(test_path),
                 );
@@ -230,7 +219,7 @@ fn bench_file_operations_by_size(c: &mut Criterion) {
 
         group.bench_function(format!("write_{label}"), |b| {
             b.iter(|| {
-                let _ = FileSystemOperations::write_file(
+                let _ = file_write::write_file(
                     std::hint::black_box(&fs),
                     std::hint::black_box(test_path),
                     std::hint::black_box(&test_data),
@@ -253,7 +242,7 @@ fn bench_partial_reads(c: &mut Criterion) {
     let test_data = (0..file_size).map(|i| (i % 256) as u8).collect::<Vec<u8>>();
 
     // Create chunked file
-    FileSystemOperations::write_file_chunked(&fs, test_path, &test_data).unwrap();
+    chunk_ops::write_file_chunked(&fs, test_path, &test_data).unwrap();
 
     // Test different partial read sizes and offsets
     let partial_tests = vec![
@@ -269,7 +258,7 @@ fn bench_partial_reads(c: &mut Criterion) {
     for (label, offset, size) in partial_tests {
         group.bench_function(format!("chunked_partial_read_{label}"), |b| {
             b.iter(|| {
-                let _ = FileSystemOperations::read_partial_chunked(
+                let _ = file_read::read_partial_chunked(
                     std::hint::black_box(&fs),
                     std::hint::black_box(test_path),
                     std::hint::black_box(offset as i64),
@@ -288,19 +277,19 @@ fn bench_directory_operations(c: &mut Criterion) {
 
     // Create test directory structure
     let base_dir = Path::new("/bench_test_dir");
-    FileSystemOperations::create_directory(&fs, base_dir, 0o755).unwrap();
+    dir_modify::create_directory(&fs, base_dir, 0o755).unwrap();
 
     // Create multiple files in directory for listing tests
     for i in 0..10 {
         let file_path = base_dir.join(format!("file_{i}.txt"));
         let data = format!("Test data for file {i}").into_bytes();
-        FileSystemOperations::write_file(&fs, &file_path, &data).unwrap();
+        file_write::write_file(&fs, &file_path, &data).unwrap();
     }
 
     group.bench_function("read_directory", |b| {
         b.iter(|| {
             // Note: read_dir requires a ReplyDirectory, so we'll just test get_dir_entry_count
-            let _ = FileSystemOperations::get_dir_entry_count(
+            let _ = dir_read::get_dir_entry_count(
                 std::hint::black_box(&fs),
                 std::hint::black_box(base_dir),
             );
@@ -310,7 +299,7 @@ fn bench_directory_operations(c: &mut Criterion) {
     group.bench_function("create_directory", |b| {
         b.iter(|| {
             let dir_path = Path::new("/temp_dir");
-            let _ = FileSystemOperations::create_directory(
+            let _ = dir_modify::create_directory(
                 std::hint::black_box(&fs),
                 std::hint::black_box(dir_path),
                 std::hint::black_box(0o755),
@@ -336,14 +325,12 @@ fn bench_file_metadata_operations(c: &mut Criterion) {
         let path_str = format!("/metadata_test_{label}.dat");
         let file_path = Path::new(&path_str);
         let data = vec![0x55u8; size];
-        FileSystemOperations::write_file(&fs, file_path, &data).unwrap();
+        file_write::write_file(&fs, file_path, &data).unwrap();
 
         group.bench_function(format!("get_attr_{label}"), |b| {
             b.iter(|| {
-                let _ = FileSystemOperations::get_attr(
-                    std::hint::black_box(&fs),
-                    std::hint::black_box(file_path),
-                );
+                let _ =
+                    attr_ops::get_attr(std::hint::black_box(&fs), std::hint::black_box(file_path));
             })
         });
     }
@@ -362,7 +349,7 @@ fn bench_partial_writes(c: &mut Criterion) {
     let chunked_path = Path::new("/chunked_partial_write_test.dat");
 
     // Create chunked file
-    FileSystemOperations::write_file_chunked(&fs, chunked_path, &test_data).unwrap();
+    chunk_ops::write_file_chunked(&fs, chunked_path, &test_data).unwrap();
 
     // Test partial writes on chunked file
     let chunked_partial_tests = vec![
@@ -389,7 +376,7 @@ fn bench_partial_writes(c: &mut Criterion) {
         let data_clone = data.to_vec();
         group.bench_function(format!("chunked_partial_write_{label}"), |b| {
             b.iter(|| {
-                let _ = FileSystemOperations::write_partial(
+                let _ = file_write::write_partial(
                     std::hint::black_box(&fs),
                     std::hint::black_box(chunked_path),
                     std::hint::black_box(offset),
@@ -402,7 +389,7 @@ fn bench_partial_writes(c: &mut Criterion) {
     // Test partial writes on regular files (< chunk size)
     let regular_path = Path::new("/regular_partial_write_test.txt");
     let small_data = b"Small file content for partial write testing. This is a regular file that won't be chunked.";
-    FileSystemOperations::write_file(&fs, regular_path, small_data).unwrap();
+    file_write::write_file(&fs, regular_path, small_data).unwrap();
 
     let regular_partial_tests = vec![
         ("regular_start", 0, "START_".as_bytes()),
@@ -415,7 +402,7 @@ fn bench_partial_writes(c: &mut Criterion) {
         let data_clone = data.to_vec();
         group.bench_function(format!("regular_partial_write_{label}"), |b| {
             b.iter(|| {
-                let _ = FileSystemOperations::write_partial(
+                let _ = file_write::write_partial(
                     std::hint::black_box(&fs),
                     std::hint::black_box(regular_path),
                     std::hint::black_box(offset),
@@ -451,7 +438,7 @@ fn bench_chunking_performance_comparison(c: &mut Criterion) {
         // Full write benchmark
         group.bench_function(format!("write_full_{label}"), |b| {
             b.iter(|| {
-                let _ = FileSystemOperations::write_file(
+                let _ = file_write::write_file(
                     std::hint::black_box(&fs),
                     std::hint::black_box(test_path),
                     std::hint::black_box(&test_data),
@@ -462,7 +449,7 @@ fn bench_chunking_performance_comparison(c: &mut Criterion) {
         // Full read benchmark
         group.bench_function(format!("read_full_{label}"), |b| {
             b.iter(|| {
-                let _ = FileSystemOperations::read_file(
+                let _ = file_read::read_file(
                     std::hint::black_box(&fs),
                     std::hint::black_box(test_path),
                 );
@@ -474,7 +461,7 @@ fn bench_chunking_performance_comparison(c: &mut Criterion) {
         let partial_data = vec![0xFFu8; 4096];
         group.bench_function(format!("write_partial_4kb_{label}"), |b| {
             b.iter(|| {
-                let _ = FileSystemOperations::write_partial(
+                let _ = file_write::write_partial(
                     std::hint::black_box(&fs),
                     std::hint::black_box(test_path),
                     std::hint::black_box(partial_offset),
@@ -506,12 +493,12 @@ fn bench_chunked_file_operations_detailed(c: &mut Criterion) {
         let test_data = (0..file_size).map(|i| (i % 256) as u8).collect::<Vec<u8>>();
 
         // Create chunked file
-        FileSystemOperations::write_file_chunked(&fs, test_path, &test_data).unwrap();
+        chunk_ops::write_file_chunked(&fs, test_path, &test_data).unwrap();
 
         // Benchmark chunked read
         group.bench_function(format!("chunked_read_{label}"), |b| {
             b.iter(|| {
-                let _ = FileSystemOperations::read_file_chunked(
+                let _ = chunk_ops::read_file_chunked(
                     std::hint::black_box(&fs),
                     std::hint::black_box(test_path),
                 );
@@ -529,7 +516,7 @@ fn bench_chunked_file_operations_detailed(c: &mut Criterion) {
             let bench_name = format!("chunked_partial_read_{}_{}_{}", label, pos_label, "64kb");
             group.bench_function(bench_name, |b| {
                 b.iter(|| {
-                    let _ = FileSystemOperations::read_partial_chunked(
+                    let _ = file_read::read_partial_chunked(
                         std::hint::black_box(&fs),
                         std::hint::black_box(test_path),
                         std::hint::black_box(*offset as i64),
@@ -545,7 +532,7 @@ fn bench_chunked_file_operations_detailed(c: &mut Criterion) {
             let bench_name = format!("chunked_partial_write_{label}_{pos_label}");
             group.bench_function(bench_name, |b| {
                 b.iter(|| {
-                    let _ = FileSystemOperations::write_partial(
+                    let _ = file_write::write_partial(
                         std::hint::black_box(&fs),
                         std::hint::black_box(test_path),
                         std::hint::black_box(*offset as i64),
@@ -574,11 +561,11 @@ fn bench_concurrent_operations(c: &mut Criterion) {
                         let data = format!("Data {i}").into_bytes();
 
                         // Create file first
-                        let _ = FileSystemOperations::write_file(&fs_clone, path, &data);
+                        let _ = file_write::write_file(&fs_clone, path, &data);
 
                         // Then read it multiple times
                         for _ in 0..10 {
-                            let _ = FileSystemOperations::read_file(&fs_clone, path);
+                            let _ = file_read::read_file(&fs_clone, path);
                         }
                     })
                 })

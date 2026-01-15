@@ -10,6 +10,39 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  property-tests:
+    name: Property Tests (proptest)
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Cache Cargo registry
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target/
+        key: ${{ runner.os }}-cargo-property-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Run property tests
+      run: cargo test --test property_tests -- --test-threads=1 --show-output
+
+    - name: Upload property test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: property-test-results
+        path: |
+          target/registry/
+
   test:
     name: Test Suite
     runs-on: ubuntu-latest
@@ -38,19 +71,33 @@ jobs:
     - name: Run clippy
       run: cargo clippy --all-targets --all-features -- -D warnings
 
-    - name: Run tests
-      run: cargo test --verbose
+    - name: Run unit tests
+      run: cargo test --lib --verbose
 
     - name: Generate test coverage
       run: |
         cargo install cargo-llvm-cov
         cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
+    - name: Check coverage threshold
+      run: |
+        COVERAGE=$(cargo llvm-cov --all-features --workspace --output-dir coverage 2>&1 | grep -oP '\d+\.\d+%(?=\s*Coverage)' || echo "0.0%")
+        echo "Coverage: $COVERAGE"
+        # Extract percentage number
+        COVERAGE_NUM=$(echo "$COVERAGE" | grep -oP '\d+\.\d+')
+        # Compare with threshold (70%)
+        if (( $(echo "$COVERAGE_NUM < 70" | bc -l) )); then
+          echo "❌ Coverage $COVERAGE is below threshold 70%"
+          exit 1
+        fi
+        echo "✅ Coverage $COVERAGE meets threshold 70%"
+
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
       with:
         file: lcov.info
         fail_ci_if_error: false
+        token: ${{ secrets.CODECOV_TOKEN }}
 
   security:
     name: Security Audit

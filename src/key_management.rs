@@ -257,10 +257,10 @@ impl KeyStorage for FileKeyStorage {
         let mut keys = Vec::new();
         for entry in fs::read_dir(&self.base_dir).map_err(ZthfsError::Io)? {
             let entry = entry.map_err(ZthfsError::Io)?;
-            if let Some(name) = entry.file_name().to_str() {
-                if let Some(key_name) = name.strip_suffix(".key") {
-                    keys.push(key_name.to_string());
-                }
+            if let Some(name) = entry.file_name().to_str()
+                && let Some(key_name) = name.strip_suffix(".key")
+            {
+                keys.push(key_name.to_string());
             }
         }
         Ok(keys)

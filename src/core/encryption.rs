@@ -252,4 +252,139 @@ mod tests {
             EncryptionConfig::default().nonce_seed
         );
     }
+
+    #[test]
+    fn test_decryption_with_invalid_ciphertext() {
+        let config = EncryptionConfig::default();
+        let encryptor = EncryptionHandler::new(&config);
+
+        let path = "/test/file.txt";
+        let invalid_ciphertext = vec![1u8; 16]; // Too short and invalid
+
+        let result = encryptor.decrypt(&invalid_ciphertext, path);
+        assert!(result.is_err());
+
+        if let Err(ZthfsError::Crypto(msg)) = result {
+            assert!(msg.contains("Decryption failed"));
+        } else {
+            panic!("Expected Crypto error");
+        }
+    }
+
+    #[test]
+    fn test_decryption_with_corrupted_ciphertext() {
+        let config = EncryptionConfig::default();
+        let encryptor = EncryptionHandler::new(&config);
+
+        let path = "/test/file.txt";
+        let test_data = b"Hello, medical data!";
+
+        // First encrypt the data
+        let encrypted = encryptor.encrypt(test_data, path).unwrap();
+
+        // Corrupt the ciphertext by flipping some bytes
+        let mut corrupted = encrypted.clone();
+        corrupted[0] = corrupted[0].wrapping_add(1);
+        corrupted[1] = corrupted[1].wrapping_add(1);
+
+        // Decryption should fail
+        let result = encryptor.decrypt(&corrupted, path);
+        assert!(result.is_err());
+
+        if let Err(ZthfsError::Crypto(msg)) = result {
+            assert!(msg.contains("Decryption failed"));
+        } else {
+            panic!("Expected Crypto error");
+        }
+    }
+
+    #[test]
+    fn test_decryption_with_wrong_length_ciphertext() {
+        let config = EncryptionConfig::default();
+        let encryptor = EncryptionHandler::new(&config);
+
+        let path = "/test/file.txt";
+
+        // Ciphertext that's too short (AES-GCM has authentication tag overhead)
+        let too_short = vec![1u8; 5];
+        let result = encryptor.decrypt(&too_short, path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_nonce_cache_consistency() {
+        let config = EncryptionConfig::default();
+        let encryptor = EncryptionHandler::new(&config);
+
+        let path = "/test/cached_file.txt";
+
+        // First call should compute and cache
+        let nonce1 = encryptor.generate_nonce(path).unwrap();
+        // Second call should return cached value
+        let nonce2 = encryptor.generate_nonce(path).unwrap();
+
+        assert_eq!(nonce1, nonce2);
+    }
+
+    #[test]
+    fn test_validate_config_invalid_nonce_seed() {
+        // Valid key but invalid nonce_seed
+        let config = EncryptionConfig {
+            key: vec![1u8; 32],
+            nonce_seed: vec![1, 2, 3], // Only 3 bytes instead of 12
+        };
+
+        let result = EncryptionHandler::validate_config(&config);
+        assert!(result.is_err());
+
+        if let Err(ZthfsError::Config(msg)) = result {
+            assert!(msg.contains("Nonce seed"));
+        } else {
+            panic!("Expected Config error");
+        }
+    }
+
+    #[test]
+    fn test_validate_config_invalid_key() {
+        // Valid nonce_seed but invalid key
+        let config = EncryptionConfig {
+            key: vec![1, 2, 3, 4, 5], // Only 5 bytes instead of 32
+            nonce_seed: vec![2u8; 12],
+        };
+
+        let result = EncryptionHandler::validate_config(&config);
+        assert!(result.is_err());
+
+        if let Err(ZthfsError::Config(msg)) = result {
+            assert!(msg.contains("key"));
+        } else {
+            panic!("Expected Config error");
+        }
+    }
+
+    #[test]
+    fn test_encryption_empty_data() {
+        let config = EncryptionConfig::default();
+        let encryptor = EncryptionHandler::new(&config);
+
+        let path = "/test/empty.txt";
+        let encrypted = encryptor.encrypt(&[], path).unwrap();
+        let decrypted = encryptor.decrypt(&encrypted, path).unwrap();
+
+        assert!(decrypted.is_empty());
+    }
+
+    #[test]
+    fn test_encryption_large_data() {
+        let config = EncryptionConfig::default();
+        let encryptor = EncryptionHandler::new(&config);
+
+        let large_data = vec![42u8; 1024 * 1024]; // 1 MB
+        let path = "/test/large.bin";
+
+        let encrypted = encryptor.encrypt(&large_data, path).unwrap();
+        let decrypted = encryptor.decrypt(&encrypted, path).unwrap();
+
+        assert_eq!(large_data, decrypted);
+    }
 }

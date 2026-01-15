@@ -15,7 +15,29 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-pub mod operations;
+// New modular operation files
+pub mod attr_ops;
+pub mod chunk_ops;
+pub mod dir_modify;
+pub mod dir_read;
+pub mod file_attr_ops;
+pub mod file_copy;
+pub mod file_create;
+pub mod file_read;
+pub mod file_write;
+pub mod inode_ops;
+pub mod metadata_ops;
+pub mod path_ops;
+pub mod space_ops;
+pub mod sync_ops;
+
+// Other modules
+pub mod directory_ops;
+pub mod file_attrs;
+pub mod file_io;
+pub mod file_management;
+pub mod metadata;
+pub mod path_utils;
 pub mod security;
 pub mod utils;
 
@@ -293,7 +315,7 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::get_attr(self, &path) {
+        match attr_ops::get_attr(self, &path) {
             Ok(attr) => {
                 self.logger
                     .log_access("lookup", &path.to_string_lossy(), uid, gid, "success", None)
@@ -351,7 +373,7 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::get_attr(self, &path) {
+        match attr_ops::get_attr(self, &path) {
             Ok(attr) => {
                 self.logger
                     .log_access(
@@ -413,7 +435,7 @@ impl Filesystem for Zthfs {
         };
 
         // Get file attributes for permission checking
-        let file_attr = match operations::FileSystemOperations::get_attr(self, &path) {
+        let file_attr = match attr_ops::get_attr(self, &path) {
             Ok(attr) => attr,
             Err(_) => {
                 self.logger
@@ -445,7 +467,7 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::read_partial_chunked(self, &path, offset, size) {
+        match file_read::read_partial_chunked(self, &path, offset, size) {
             Ok(data) => {
                 if data.is_empty() {
                     self.logger
@@ -500,7 +522,7 @@ impl Filesystem for Zthfs {
         };
 
         // Get file attributes for permission checking
-        let file_attr = match operations::FileSystemOperations::get_attr(self, &path) {
+        let file_attr = match attr_ops::get_attr(self, &path) {
             Ok(attr) => attr,
             Err(_) => {
                 self.logger
@@ -533,7 +555,7 @@ impl Filesystem for Zthfs {
         }
 
         // Use partial write implementation for proper POSIX semantics
-        match operations::FileSystemOperations::write_partial(self, &path, _offset, data) {
+        match file_write::write_partial(self, &path, _offset, data) {
             Ok(bytes_written) => {
                 self.logger
                     .log_access(
@@ -597,7 +619,7 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::read_dir(self, &path, offset, &mut reply) {
+        match dir_read::read_dir(self, &path, offset, &mut reply) {
             Ok(()) => {
                 self.logger
                     .log_access(
@@ -680,7 +702,7 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::create_file(self, &path, mode) {
+        match file_create::create_file(self, &path, mode) {
             Ok(attr) => {
                 self.logger
                     .log_access("create", &path.to_string_lossy(), uid, gid, "success", None)
@@ -748,7 +770,7 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::remove_file(self, &path) {
+        match file_create::remove_file(self, &path) {
             Ok(()) => {
                 self.logger
                     .log_access("unlink", &path.to_string_lossy(), uid, gid, "success", None)
@@ -827,7 +849,7 @@ impl Filesystem for Zthfs {
         // Apply umask to mode
         let effective_mode = mode & !_umask;
 
-        match operations::FileSystemOperations::create_directory(self, &path, effective_mode) {
+        match dir_modify::create_directory(self, &path, effective_mode) {
             Ok(attr) => {
                 self.logger
                     .log_access("mkdir", &path.to_string_lossy(), uid, gid, "success", None)
@@ -893,7 +915,7 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::remove_directory(self, &path, false) {
+        match dir_modify::remove_directory(self, &path, false) {
             Ok(()) => {
                 self.logger
                     .log_access("rmdir", &path.to_string_lossy(), uid, gid, "success", None)
@@ -962,7 +984,7 @@ impl Filesystem for Zthfs {
             return;
         }
 
-        match operations::FileSystemOperations::rename_file(self, &old_path, &new_path) {
+        match file_copy::rename_file(self, &old_path, &new_path) {
             Ok(()) => {
                 self.logger
                     .log_access(
@@ -1026,7 +1048,7 @@ impl Filesystem for Zthfs {
         };
 
         // Get current attributes for permission check
-        let current_attr = match operations::FileSystemOperations::get_attr(self, &path) {
+        let current_attr = match attr_ops::get_attr(self, &path) {
             Ok(attr) => attr,
             Err(_) => {
                 reply.error(libc::ENOENT);
@@ -1069,10 +1091,10 @@ impl Filesystem for Zthfs {
             }
         });
 
-        match operations::FileSystemOperations::set_file_attributes(
+        match file_attr_ops::set_file_attributes(
             self, &path, mode, uid, gid, size, atime_secs, mtime_secs,
         ) {
-            Ok(()) => match operations::FileSystemOperations::get_attr(self, &path) {
+            Ok(()) => match attr_ops::get_attr(self, &path) {
                 Ok(attr) => reply.attr(&TTL, &attr),
                 Err(_) => reply.error(libc::EIO),
             },
@@ -1105,7 +1127,7 @@ impl Filesystem for Zthfs {
             }
         };
 
-        let file_attr = match operations::FileSystemOperations::get_attr(self, &path) {
+        let file_attr = match attr_ops::get_attr(self, &path) {
             Ok(attr) => attr,
             Err(_) => {
                 reply.error(libc::ENOENT);
@@ -1145,21 +1167,22 @@ impl Filesystem for Zthfs {
         }
 
         // Handle O_TRUNC
-        if (flags & libc::O_TRUNC) != 0 && write_required {
-            if let Err(e) = operations::FileSystemOperations::truncate_file(self, &path, 0) {
-                self.logger
-                    .log_error(
-                        "open",
-                        &path.to_string_lossy(),
-                        uid,
-                        gid,
-                        &format!("{e}"),
-                        None,
-                    )
-                    .unwrap_or(());
-                reply.error(libc::EIO);
-                return;
-            }
+        if (flags & libc::O_TRUNC) != 0
+            && write_required
+            && let Err(e) = file_attr_ops::truncate_file(self, &path, 0)
+        {
+            self.logger
+                .log_error(
+                    "open",
+                    &path.to_string_lossy(),
+                    uid,
+                    gid,
+                    &format!("{e}"),
+                    None,
+                )
+                .unwrap_or(());
+            reply.error(libc::EIO);
+            return;
         }
 
         self.logger
@@ -1216,10 +1239,10 @@ impl Filesystem for Zthfs {
 
         let result = if datasync {
             // fdatasync: sync data only
-            operations::FileSystemOperations::sync_data(self, &path)
+            sync_ops::sync_data(self, &path)
         } else {
             // fsync: sync data and metadata
-            operations::FileSystemOperations::sync_all(self, &path)
+            sync_ops::sync_all(self, &path)
         };
 
         match result {

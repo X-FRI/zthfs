@@ -67,7 +67,7 @@ pub use core::encryption::EncryptionHandler;
 pub use core::integrity::IntegrityHandler;
 pub use core::logging::{AccessLogEntry, LogHandler};
 pub use errors::{ZthfsError, ZthfsResult};
-pub use fs_impl::{Zthfs, operations::FileSystemOperations};
+pub use fs_impl::Zthfs;
 pub use key_management::{
     FileKeyStorage, InMemoryKeyStorage, KeyManager, KeyMetadata, KeyStorage, StoredKey,
     create_file_key_manager,
@@ -75,9 +75,6 @@ pub use key_management::{
 pub use transactions::{
     CowHelper, TransactionId, TransactionOp, TransactionStatus, WalEntry, WriteAheadLog,
 };
-pub mod operations {
-    pub use crate::fs_impl::operations::FileSystemOperations;
-}
 
 /// Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -213,5 +210,70 @@ mod integration_tests {
             .unwrap();
 
         assert!(valid_config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_init_function() {
+        // Test the init function
+        let result = init();
+        assert!(result.is_ok());
+        // Verify VERSION is not empty
+        assert!(!VERSION.is_empty());
+    }
+
+    #[test]
+    fn test_health_check() {
+        // Test the health_check function
+        let result = health_check();
+        assert!(result.is_ok());
+
+        let health_output = result.unwrap();
+        // Verify the output contains expected strings
+        assert!(health_output.contains("AES-GCM encryption"));
+        assert!(health_output.contains("CRC32c integrity"));
+        assert!(health_output.contains("JSON serialization"));
+        assert!(health_output.contains("FUSE integration"));
+
+        // Check if /dev/fuse exists (should on most Linux systems)
+        if std::path::Path::new("/dev/fuse").exists() {
+            assert!(health_output.contains("FUSE device: Available"));
+        } else {
+            assert!(health_output.contains("FUSE device: Not available"));
+        }
+    }
+
+    #[test]
+    fn test_version_constant() {
+        // Test VERSION constant is accessible and valid
+        assert!(!VERSION.is_empty());
+        // VERSION should be a semantic version like "0.1.0"
+        assert!(VERSION.contains('.'));
+    }
+
+    #[test]
+    fn test_build_info_constant() {
+        // Test BUILD_INFO constant is accessible
+        assert!(!BUILD_INFO.is_empty());
+        // BUILD_INFO should contain version information
+        assert!(BUILD_INFO.contains("version="));
+        assert!(BUILD_INFO.contains("build_time="));
+        assert!(BUILD_INFO.contains("git_sha="));
+        assert!(BUILD_INFO.contains("rustc="));
+    }
+
+    #[test]
+    fn test_module_reexports() {
+        // Test that key types are re-exported
+        // This is a compile-time check that the re-exports work
+        let _ = ZthfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "test"));
+        let _: ZthfsResult<()> = Ok(());
+
+        // Test that config types are available
+        let log_config = LogConfig::default();
+        assert!(!log_config.file_path.is_empty()); // Default has a file path
+
+        // Test that encryption config is available
+        let enc_config = EncryptionConfig::with_random_keys();
+        assert!(!enc_config.key.is_empty());
     }
 }

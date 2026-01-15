@@ -288,11 +288,7 @@ impl SecurityValidator {
 
         let attempts = self.failed_attempts.lock().unwrap();
         if let Some(entry) = attempts.get(&uid) {
-            if entry.lockout_until > now {
-                entry.lockout_until - now
-            } else {
-                0
-            }
+            entry.lockout_until.saturating_sub(now)
         } else {
             0
         }
@@ -438,17 +434,18 @@ impl SecurityValidator {
         };
 
         // Audit log root access
-        if allowed && user_uid == 0 {
-            if let Some(path) = file_path {
-                let _ = self.record_security_event(
-                    SecurityEvent::RootAccess {
-                        user: user_uid,
-                        path: path.to_string(),
-                        operation: format!("{:?}", requested_access),
-                    },
-                    SecurityLevel::High,
-                );
-            }
+        if allowed
+            && user_uid == 0
+            && let Some(path) = file_path
+        {
+            let _ = self.record_security_event(
+                SecurityEvent::RootAccess {
+                    user: user_uid,
+                    path: path.to_string(),
+                    operation: format!("{:?}", requested_access),
+                },
+                SecurityLevel::High,
+            );
         }
 
         allowed

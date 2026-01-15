@@ -331,7 +331,7 @@ fn run_health_check() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_demo() -> Result<(), Box<dyn std::error::Error>> {
     use std::fs;
-    use zthfs::{config::FilesystemConfigBuilder, operations::FileSystemOperations};
+    use zthfs::config::FilesystemConfigBuilder;
 
     info!("Running ZTHFS demonstration");
 
@@ -372,10 +372,10 @@ fn run_demo() -> Result<(), Box<dyn std::error::Error>> {
     let medical_data = b"Patient ID: 12345\nDiagnosis: Hypertension\nTreatment: Medication";
 
     println!("📝 Writing medical data to file...");
-    FileSystemOperations::write_file(&fs, test_file, medical_data)?;
+    zthfs::fs_impl::file_write::write_file(&fs, test_file, medical_data)?;
 
     println!("📖 Reading medical data from file...");
-    let read_data = FileSystemOperations::read_file(&fs, test_file)?;
+    let read_data = zthfs::fs_impl::file_read::read_file(&fs, test_file)?;
     println!("✓ Data integrity verified");
 
     assert_eq!(medical_data, read_data.as_slice());
@@ -383,13 +383,13 @@ fn run_demo() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test directory operations
     let test_dir = Path::new("/medical_records");
-    FileSystemOperations::create_directory(&fs, test_dir, 0o755)?;
+    zthfs::fs_impl::dir_modify::create_directory(&fs, test_dir, 0o755)?;
 
     println!("📁 Created directory: {}", test_dir.display());
 
     // Test file copy
     let dest_file = Path::new("/medical_records/copied_record.txt");
-    FileSystemOperations::copy_file(&fs, test_file, dest_file)?;
+    zthfs::fs_impl::file_copy::copy_file(&fs, test_file, dest_file)?;
     println!("📋 Copied file to: {}", dest_file.display());
 
     println!("\n🎉 Demo completed successfully!");
