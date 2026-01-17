@@ -1,160 +1,420 @@
-# ZTHFS - Zero-Trust Healthcare Filesystem
+# ZTHFS - 零信任医疗文件系统
 
 [![License](https://img.shields.io/badge/license-BSD3--Clause-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70+-blue.svg)](https://www.rust-lang.org)
-[![Coverage](https://img.shields.io/badge/coverage-67.35%25-green.svg)](coverage/tarpaulin-report.html)
+[![Coverage](https://img.shields.io/badge/coverage-64.89%25-green.svg)](coverage/tarpaulin-report.html)
 
-## 概述
+## 摘要
 
-ZTHFS 实现面向医疗数据保护的透明加密文件系统。系统提供构建 HIPAA/GDPR 合规存储系统所需的密码学原语和安全机制，以完整的 FUSE 文件系统形式交付，支持透明的加密和解密操作。
+ZTHFS 是一个基于 FUSE 的加密文件系统，为敏感数据存储提供透明加密、完整性验证和访问控制。系统实现了基于计数器的 AES-256-GCM 加密、带可选 HMAC 签名的 BLAKE3 完整性验证，以及零信任安全模型——所有用户（包括 root）都需要显式授权。
 
-系统架构采用分层设计，包含八个核心模块。加密模块和完整性模块构成密码学基础，实现 AES-256-GCM 加密和基于 BLAKE3 的完整性验证。安全模块通过 POSIX 权限检查配合用户和组白名单提供访问控制。事务管理通过预写日志确保原子操作，密钥管理模块负责密钥的安全存储和轮转。FUSE 文件系统层通过标准文件系统操作暴露这些能力。
+## 系统架构
 
-## 代码组织
-
-文件系统实现已重构为聚焦模块，每个模块包含相关操作及内联测试。这种组织方式通过降低导航代码库时的认知负荷来提升可维护性。
-
-模块化结构分离关注点：
-
-- 路径操作处理虚拟到物理路径转换
-- Inode 操作管理唯一标识符分配和映射
-- 属性操作检索文件元数据
-- 文件读写操作处理数据传输，支持分块
-- 分块操作优化大文件存储
-- 元数据操作持久化文件和目录属性
-- 目录操作管理文件夹创建和删除
-- 文件创建、复制和属性修改操作提供完整文件生命周期管理
-
-测试覆盖率达到 67.35%，涵盖 1869 行代码，确保关键路径得到验证。
-
-## 密码学安全
-
-加密采用 AES-256-GCM，每文件使用唯一 nonce。nonce 通过 BLAKE3(path || nonce_seed) 派生，该构造确保给定路径的 nonce 生成具有确定性，同时防止不同文件间的 nonce 重用。确定性 nonce 使得文件恢复无需额外 nonce 元数据，而 nonce_seed 的引入防止了可预测性。这种方法在存储效率和密码学安全之间取得平衡，因为 GCM 模式下的 nonce 重用会破坏认证保证。
-
-完整性验证支持两种具有不同安全属性的算法。BLAKE3 通过密钥哈希提供密码学消息认证，适用于需要强完整性保证的数据。CRC32c 为计算效率优先于密码学强度的非关键数据提供轻量级替代方案。校验和存储为扩展属性，支持无需预先解密的验证。
-
-时序攻击防护利用 `subtle` crate 的常量时间比较。认证失败触发指数退避延迟，从 100ms 开始，每次失败翻倍，上限 5 秒。失败尝试计数跨请求持久化，锁定时长计算为 2^(attempt_count - 1) 秒，上限 1 小时。该构造遵循在线攻击缓解的最佳实践，成功暴力破解的成本随尝试次数指数增长。
-
-## 访问控制
-
-安全验证器实现 POSIX 权限检查，并增加用户和组白名单。文件访问要求 `allowed_users` 或 `allowed_groups` 成员资格，确保即使拥有适当 POSIX 权限的用户，除非显式授权，否则无法访问文件。权限检查器从文件元数据提取所有者、组和权限位，然后应用标准 POSIX rwx 逻辑确定访问权限。
-
-零信任模式通过 `with_zero_trust_root()` 启用，移除传统 Unix root 绕过机制。该配置下 uid 0 必须通过与其他用户相同的权限检查，且必须出现在允许用户列表中。root 访问尝试生成 High 级别的审计日志条目，确保特权操作可见。该设计符合零信任原则，即不基于单一身份授予隐式信任。
-
-## 事务管理
-
-预写日志 (WAL) 确保原子操作和崩溃恢复。每个事务在执行前记录到独立的 WAL 文件，创建能够抵御系统故障的持久化日志。事务生命周期经历三种状态：
+系统采用分层架构，职责清晰分离：
 
 ```mermaid
-stateDiagram-v2
-    [*] --> InProgress: begin_transaction()
-    InProgress --> InProgress: write WAL entry
-    InProgress --> Committed: execute operations
-    Committed --> [*]: update metadata
-    InProgress --> RolledBack: crash/rollback
+graph TB
+    subgraph "应用层"
+        App[用户应用]
+    end
+
+    subgraph "FUSE 接口"
+        Fuse[FUSE 内核模块]
+    end
+
+    subgraph "ZTHFS 核心"
+        subgraph "文件系统操作"
+            Read[读写]
+            Create[创建/删除]
+            Attr[属性操作]
+            Dir[目录操作]
+            Rename[重命名]
+        end
+
+        subgraph "安全服务"
+            Enc[加密处理器]
+            Int[完整性处理器]
+            Sec[安全验证器]
+            Key[密钥管理器]
+            KDF[密钥派生]
+        end
+    end
+
+    subgraph "存储层"
+        DB[(sled 数据库<br/>Inode 映射)]
+        Data[加密文件<br/>+ 扩展属性]
+        Meta[元数据文件<br/>JSON 格式]
+        WAL[预写日志]
+    end
+
+    App --> Fuse
+    Fuse --> Read
+    Fuse --> Create
+    Fuse --> Attr
+    Fuse --> Dir
+    Fuse --> Rename
+
+    Read --> Sec
+    Create --> Sec
+    Attr --> Sec
+    Dir --> Sec
+    Rename --> Sec
+
+    Sec --> Enc
+    Read --> Enc
+    Create --> Enc
+
+    Enc --> Int
+    Int --> Data
+
+    Create --> DB
+    Dir --> DB
+    Rename --> DB
+    Create --> Meta
+    Create --> WAL
+
+    Key --> Enc
+    KDF --> Key
 ```
 
-启动时 WAL 扫描未完成事务并自动回滚，确保一致性。
+## 数据流
 
-写时复制 (COW) 原语实现原子文件更新。`atomic_write` 函数将数据写入临时文件，同步到磁盘，然后重命名覆盖目标。POSIX 保证原子重命名操作，防止部分写入变为可见。
+### 写入操作
 
-## 密钥管理
+```mermaid
+sequenceDiagram
+    participant App as 应用程序
+    participant Fuse as FUSE
+    participant Sec as 安全验证器
+    participant Enc as 加密处理器
+    participant Nonce as NonceManager
+    participant Int as 完整性处理器
+    participant Disk as 存储层
 
-密钥管理系统提供可插拔存储接口。`InMemoryKeyStorage` 服务于无需持久化的测试场景。`FileKeyStorage` 使用主密钥加密密钥存储，主密钥派生自系统特定熵（主机名、machine-id、用户名）。该派生确保从一个系统提取的密钥无法在另一系统解密，增加物理安全层。
+    App->>Fuse: write(path, data, offset)
+    Fuse->>Sec: validate_access(uid, gid, path)
+    alt 访问拒绝
+        Sec-->>Fuse: PermissionDenied
+        Fuse-->>App: EACCES
+    else 访问允许
+        Sec-->>Fuse: Authorized
 
-每个密钥附带元数据存储，包括版本号、创建时间戳和过期时间。密钥轮换生成新版本并递增版本计数器。旧版本保持可用直到手动删除，支持渐进式密钥迁移。
+        Fuse->>Nonce: get_counter(path)
+        Nonce->>Nonce: BLAKE3(path || seed || counter)
+        Nonce-->>Enc: nonce
 
-## 文件系统操作
+        Enc->>Enc: aes256_gcm_seal(data, nonce)
+        Enc-->>Fuse: ciphertext
 
-FUSE 实现提供十四种操作，覆盖标准文件系统功能。路径解析通过存储于 sled 数据库的双向映射将文件系统路径映射到内部 inode。文件操作支持大文件分块存储，可配置块大小默认为 4MB。
+        Fuse->>Int: compute_checksum(ciphertext)
+        Int->>Int: blake3_hash(ciphertext)
+        Int->>Int: hmac_sign(checksum)
+        Int-->>Fuse: checksum + signature
 
-目录操作使用标记文件 (`.zthfs_dir`) 持久化目录元数据，支持跨文件系统重新挂载的属性保留。空目录检查防止删除非空目录。原子重命名操作使用数据库批处理同时移动元数据和分块文件，确保重命名期间的故障不会导致部分移动的文件。
+        Fuse->>Disk: write(ciphertext)
+        Fuse->>Disk: set_xattr("user.checksum")
+        Fuse->>Disk: set_xattr("user.hmac")
+        Fuse->>Nonce: increment_counter(path)
 
-文件属性修改通过 `setattr` 接口支持 chmod、chown、utime 和 truncate 操作。时间转换处理绝对时间戳和 utime 操作的特殊 `TimeOrNow::Now` 值。属性修改前进行权限检查。
+        Fuse-->>App: bytes_written
+    end
+```
 
-完整操作集包括 lookup、getattr、read、write、readdir、create、unlink、mkdir、rmdir、rename、setattr、open、release 和 fsync。所有操作包含权限检查和审计日志。
+### 读取操作
 
-## 使用方式
+```mermaid
+sequenceDiagram
+    participant App as 应用程序
+    participant Fuse as FUSE
+    participant Sec as 安全验证器
+    participant Disk as 存储层
+    participant Int as 完整性处理器
+    participant Enc as 加密处理器
 
-### 库 API
+    App->>Fuse: read(path, size, offset)
+    Fuse->>Sec: validate_access(uid, gid, path)
+    alt 访问拒绝
+        Sec-->>Fuse: PermissionDenied
+        Fuse-->>App: EACCES
+    else 访问允许
+        Sec-->>Fuse: Authorized
 
-核心模块暴露 Rust API 供应用集成。
+        Fuse->>Disk: read ciphertext
+        Fuse->>Disk: get_xattr("user.checksum")
+
+        Disk-->>Int: ciphertext, checksum
+        Int->>Int: blake3_verify(ciphertext, checksum)
+        Int->>Int: hmac_verify(checksum)
+        alt 验证失败
+            Int-->>Fuse: ChecksumMismatch
+            Fuse-->>App: EIO
+        else 验证通过
+            Int-->>Fuse: Valid
+
+            Disk-->>Enc: ciphertext
+            Enc->>Enc: aes256_gcm_open(ciphertext, nonce)
+            Enc-->>Fuse: plaintext
+
+            Fuse-->>App: plaintext
+        end
+    end
+```
+
+## 密码学设计
+
+### 加密
+
+ZTHFS 采用 AES-256-GCM 进行认证加密。关键安全属性——nonce 唯一性——通过基于计数器的方案强制执行，每个文件维护一个持久化的计数器，存储为扩展属性。
 
 ```rust
 use zthfs::{
-    core::encryption::EncryptionHandler,
-    core::integrity::IntegrityHandler,
+    core::encryption::{EncryptionHandler, NonceManager},
     config::EncryptionConfig,
 };
 
+// 生产环境配置
 let config = EncryptionConfig::random()?;
-let handler = EncryptionHandler::new(&config);
-let encrypted = handler.encrypt(data, "/path/to/file")?;
+let nonce_manager = NonceManager::new(data_dir.into());
+let handler = EncryptionHandler::with_nonce_manager(&config, Arc::new(nonce_manager));
 
-let checksum = IntegrityHandler::compute_checksum(
-    &encrypted, "blake3", &config.key,
-)?;
+// 每文件唯一 nonce 派生自：
+// nonce = BLAKE3(path || nonce_seed || counter)
+let encrypted = handler.encrypt(plaintext, "/path/to/file")?;
 ```
 
-### CLI 命令
+**Nonce 唯一性要求**：GCM 模式 nonce 重用使得通过 XOR 分析使用相同密钥和 nonce 加密的密文来恢复明文成为可能。基于计数器的方法保证了对给定文件路径的所有加密操作的 nonce 唯一性。
 
-二进制文件提供子命令用于文件系统管理。`init` 生成带密码学安全随机密钥的配置文件。`validate` 检查配置文件语法和安全设置。`mount` 使用指定配置挂载 FUSE 文件系统，`unmount` 清理卸载已挂载的文件系统。`health` 显示组件状态用于监控。`demo` 运行加密操作演示用于验证。`info` 显示版本和构建信息。
+### 完整性验证
 
-## 测试
+系统提供两级完整性保护：
 
-测试套件包含 369 个单元测试，覆盖加密操作、安全验证、密钥管理、事务处理和文件系统操作。测试覆盖率达到 67.35%。
+1. **BLAKE3 校验和**：作为扩展属性存储的加密数据哈希
+2. **HMAC-SHA256 签名**：可选签名，防止具有磁盘写入权限的攻击者篡改校验和
 
-执行 `cargo test --lib` 运行测试套件。FUSE 集成测试需要 root 权限，已标记为忽略。
+```rust
+use zthfs::{
+    core::integrity::IntegrityHandler,
+    config::IntegrityConfig,
+};
 
-```bash
-# 运行单元测试
-cargo test --lib
+// 启用 HMAC 签名以检测篡改
+let config = IntegrityConfig::with_hmac_signing(key, hmac_key);
+let checksum = IntegrityHandler::compute_checksum(&ciphertext, "blake3", &config.key)?;
+let signature = IntegrityHandler::compute_hmac_signature(&checksum, &config.hmac_key)?;
+```
 
-# 生成覆盖率报告
-cargo tarpaulin --workspace --exclude-files '*/tests/*' --out Html
+### 密钥派生
 
-# 代码质量检查
-cargo clippy --all-targets
+基于密码的密钥存储使用 Argon2id，这是一种抗 GPU 和 ASIC 攻击的内存硬密钥派生函数。默认参数遵循 OWASP 对交互式登录的推荐：
+
+| 参数 | 值 | 说明 |
+|-----|-----|------|
+| 内存开销 | 64 MiB | 每次迭代所需内存 |
+| 时间开销 | 3 | 迭代次数 |
+| 并行度 | 4 | 并行度 |
+| 盐长度 | 16 字节 | 密码学安全随机盐 |
+
+```rust
+use zthfs::key_derivation::{KeyDerivation, KeyDerivationConfig};
+
+let config = KeyDerivationConfig::high_security();
+let master_key = KeyDerivation::derive_key("passphrase", &config)?;
+```
+
+## 访问控制
+
+零信任安全模型要求所有用户——包括 root——满足三个独立条件：
+
+1. **白名单成员资格**：用户或组必须出现在显式允许列表中
+2. **POSIX 权限**：标准 rwx 位必须授予请求的操作
+3. **审计日志**：所有访问尝试都以适当的严重级别记录
+
+```rust
+use zthfs::fs_impl::security::SecurityValidator;
+
+// 零信任模式（默认）：root 没有特殊权限
+let validator = SecurityValidator::new(config);
+
+// 传统模式：root 绕过权限检查（不推荐）
+let validator = SecurityValidator::with_legacy_root(config);
+```
+
+## 存储组织
+
+```
+/data/
+├── zthfs.db                    # sled 数据库：inode ↔ 路径映射
+├── inodes/                      # 加密文件存储
+│   └── {inode_hash}/
+│       ├── data.0              # 分块 0（默认 4 MB）
+│       ├── data.1              # 分块 1
+│       ├── ...
+│       └── metadata.json       # 分块元数据
+├── keys/
+│   └── master.key.enc          # 加密的主密钥
+├── wal/
+│   └── {transaction_id}.wal    # 预写日志条目
+└── zthfs.log                    # 审计日志
+```
+
+## 分块文件存储
+
+超过配置块大小（默认：4 MB）的文件被分割成多个块。该设计实现：
+
+- **高效的部分写入**：仅重新加密修改的块
+- **并行 I/O**：块可以并发读/写
+- **内存效率**：操作无需将整个文件加载到内存
+
+```mermaid
+graph LR
+    subgraph "大文件"
+        File[100 MB 文件]
+    end
+
+    subgraph "分块存储"
+        C1[块 0<br/>0-4 MB]
+        C2[块 1<br/>4-8 MB]
+        C3[块 2<br/>8-12 MB]
+        Cn[块 24<br/>96-100 MB]
+    end
+
+    subgraph "磁盘"
+        E1[encrypted.0]
+        E2[encrypted.1]
+        E3[encrypted.2]
+        En[encrypted.24]
+        Meta[metadata.json]
+    end
+
+    File --> C1
+    File --> C2
+    File --> C3
+    File --> Cn
+
+    C1 --> E1
+    C2 --> E2
+    C3 --> E3
+    Cn --> En
+
+    C1 --> Meta
+    C2 --> Meta
+    C3 --> Meta
+    Cn --> Meta
+```
+
+## 事务管理
+
+通过预写日志（WAL）保证原子操作：
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pending: begin_transaction()
+    Pending --> WAL: write_operation()
+    WAL --> WAL: log_to_disk()
+    WAL --> Executing: flush_complete()
+    Executing --> Committed: operations_success()
+    Executing --> RolledBack: operations_failed()
+    Committed --> [*]: cleanup_wal()
+    RolledBack --> [*]: cleanup_wal()
+```
+
+启动时，WAL 扫描未完成的事务并自动回滚，确保崩溃后的文件系统一致性。
+
+## 配置
+
+文件系统接受 TOML 配置文件：
+
+```toml
+[data_dir]
+path = "/var/lib/zthfs"
+
+[encryption]
+algorithm = "aes256-gcm"
+key_size = 32
+nonce_seed = "base64-encoded-csprng-seed"
+
+[integrity]
+algorithm = "blake3"
+enable_hmac = true
+
+[security]
+zero_trust_root = true
+allowed_users = ["alice", "bob"]
+allowed_groups = ["medical-team"]
+max_failed_attempts = 3
+lockout_duration = 3600
+
+[key_derivation]
+algorithm = "argon2id"
+memory_cost = 65536    # 64 MiB
+time_cost = 3
+parallelism = 4
+
+[performance]
+chunk_size = 4194304   # 4 MB
+cache_size = 256
 ```
 
 ## 实现状态
 
-已完成模块包括加密、完整性、日志、配置、安全验证、事务、密钥管理和 FUSE 文件系统实现。全部十四个 FUSE 操作已实现：lookup、getattr、read、write、readdir、create、unlink、mkdir、rmdir、rename、setattr、open、release 和 fsync。
+| 模块 | 状态 | 说明 |
+|-----|------|------|
+| 加密 | 完成 | AES-256-GCM + NonceManager |
+| 完整性 | 完成 | BLAKE3 + HMAC-SHA256 |
+| 安全 | 完成 | 零信任访问控制 |
+| 密钥管理 | 完成 | 基于文件的存储，支持轮转 |
+| 密钥派生 | 完成 | Argon2id KDF |
+| FUSE 操作 | 完成 | 全部 14 个操作已实现 |
+| HSM/KMS 后端 | 计划中 | 硬件安全模块集成 |
+| 分布式存储 | 计划中 | 多节点复制 |
 
-未实现功能包括 HSM/KMS 后端、性能监控指标和综合集成测试。这些代表未来开发领域，而非核心功能缺陷。
+## 测试
 
-## 开发路线图
+```bash
+# 单元测试
+cargo test --lib
 
-短期优先级聚焦提升测试覆盖率和生产部署工具。中期目标覆盖 HSM/KMS 后端实现，服务于需要硬件安全模块的环境。长期目标针对分布式存储后端和多租户隔离机制。
+# 属性测试（每个属性 256 个用例）
+cargo test --lib property_tests
+
+# 覆盖率分析
+cargo tarpaulin --workspace --exclude-files '*/tests/*' --out Html
+
+# 代码检查
+cargo clippy --all-targets
+```
+
+当前测试覆盖率：**64.89%** (1571/2421 行)
+
+## 安全考虑
+
+### 威胁模型
+
+系统缓解以下威胁：
+
+| 威胁 | 缓解措施 |
+|-----|----------|
+| 未授权数据访问 | AES-256-GCM 加密 + 访问控制 |
+| 数据篡改 | BLAKE3 校验和 + HMAC 签名 |
+| Nonce 重用攻击 | 基于计数器的 nonce 生成 |
+| 密码破解 | Argon2id + OWASP 参数 |
+| 权限提升 | 零信任 root 模型 |
+| 时序攻击 | 常量时间比较 |
+
+### 已知限制
+
+1. **元数据泄漏**：文件大小、访问模式和目录结构仍然可见
+2. **单点故障**：主密钥丢失将导致数据永久无法访问
+3. **性能开销**：加密/完整性操作为所有 I/O 增加延迟
+
+## 参考文献
+
+- NIST Special Publication 800-38D: Recommendation for Block Cipher Modes of Operation
+- OWASP Argon2id Guidelines: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+- FUSE Documentation: https://libfuse.github.io/
 
 ## 许可证
 
-```
+BSD 3-Clause - 详见 [LICENSE](LICENSE)
+
 Copyright (c) 2025 Somhairle H. Marisol
-
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification,
-are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright notice,
-      this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright notice,
-      this list of conditions and the following disclaimer in the documentation
-      and/or other materials provided with the distribution.
-    * Neither the name of ZTHFS nor the names of its contributors
-      may be used to endorse or promote products derived from this software
-      without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
-CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-```

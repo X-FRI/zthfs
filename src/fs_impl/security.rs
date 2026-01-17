@@ -120,13 +120,22 @@ pub struct SecurityValidator {
     auth_failure_delay_ms: u64,
     /// Maximum delay for exponential backoff (milliseconds)
     max_backoff_delay_ms: u64,
-    /// When true, root (uid=0) must be explicitly allowed via allowed_users list
-    /// and must still pass file permission checks. Default: false (legacy behavior).
-    /// For production/medical use, this should be set to true.
+    /// When false, root (uid=0) can bypass file permission checks (legacy mode).
+    /// When true, root must be explicitly allowed via allowed_users list
+    /// and must still pass file permission checks (zero-trust mode).
+    /// Default: true (zero-trust behavior).
     respect_root: bool,
 }
 
 impl SecurityValidator {
+    /// Create a new SecurityValidator with zero-trust root policy.
+    ///
+    /// **SECURITY DEFAULT**: As of this version, zero-trust mode is enabled by default.
+    /// This means root (uid=0) must be explicitly allowed via allowed_users list and
+    /// still passes all file permission checks. This is the RECOMMENDED setting for
+    /// production, especially for medical/healthcare data handling.
+    ///
+    /// For legacy behavior where root bypasses all permissions, use `with_legacy_root()`.
     pub fn new(config: SecurityConfig) -> Self {
         Self {
             config: Arc::new(config),
@@ -135,13 +144,28 @@ impl SecurityValidator {
             max_failed_attempts: 5,
             auth_failure_delay_ms: 100, // 100ms base delay
             max_backoff_delay_ms: 5000, // 5 second max delay
-            respect_root: false,        // Default to legacy behavior
+            respect_root: true,         // Default to zero-trust behavior
         }
     }
 
     /// Create a new SecurityValidator with zero-trust root policy.
+    ///
     /// In zero-trust mode, root must be explicitly allowed and still passes permission checks.
+    /// This is now the default behavior via `new()`, but this method is kept for explicitness.
     pub fn with_zero_trust_root(config: SecurityConfig) -> Self {
+        Self::new(config) // Now just calls new() since zero-trust is the default
+    }
+
+    /// Create a new SecurityValidator with legacy root policy.
+    ///
+    /// **SECURITY WARNING**: Legacy mode allows root to bypass all file permission checks.
+    /// This violates zero-trust security principles and should NOT be used for:
+    /// - Medical data (HIPAA compliance)
+    /// - Production systems
+    /// - Multi-user environments
+    ///
+    /// This mode is only provided for backward compatibility with existing deployments.
+    pub fn with_legacy_root(config: SecurityConfig) -> Self {
         Self {
             config: Arc::new(config),
             failed_attempts: Arc::new(Mutex::new(HashMap::new())),
@@ -149,12 +173,14 @@ impl SecurityValidator {
             max_failed_attempts: 5,
             auth_failure_delay_ms: 100, // 100ms base delay
             max_backoff_delay_ms: 5000, // 5 second max delay
-            respect_root: true,         // Enable zero-trust for root
+            respect_root: false,        // Legacy mode: root bypasses checks
         }
     }
 
     /// Set whether root should bypass permission checks.
-    /// For production/medical use, this should be set to false (zero-trust).
+    ///
+    /// - `false`: Zero-trust mode (RECOMMENDED for production). Root must be explicitly allowed.
+    /// - `true`: Legacy mode (WARNING: security risk). Root bypasses permission checks.
     pub fn set_respect_root(&mut self, respect: bool) {
         self.respect_root = respect;
     }
@@ -513,7 +539,17 @@ mod tests {
             encryption_strength: "high".to_string(),
             access_control_level: "strict".to_string(),
         };
-        SecurityValidator::new(config)
+        SecurityValidator::with_legacy_root(config) // Use legacy mode for test compatibility
+    }
+
+    fn create_zero_trust_test_validator() -> SecurityValidator {
+        let config = SecurityConfig {
+            allowed_users: vec![1000, 0],
+            allowed_groups: vec![1000, 0],
+            encryption_strength: "high".to_string(),
+            access_control_level: "strict".to_string(),
+        };
+        SecurityValidator::new(config) // Default is now zero-trust
     }
 
     #[test]
@@ -991,14 +1027,14 @@ mod tests {
 
     #[test]
     fn test_legacy_root_bypass_mode() {
-        // Create a validator with legacy root policy (default)
+        // Create a validator with legacy root policy (explicitly requested)
         let config = SecurityConfig {
             allowed_users: vec![1000, 0], // Root is explicitly allowed
             allowed_groups: vec![1000, 0],
             encryption_strength: "high".to_string(),
             access_control_level: "strict".to_string(),
         };
-        let validator = SecurityValidator::new(config);
+        let validator = SecurityValidator::with_legacy_root(config);
         assert_eq!(validator.is_root_bypass_enabled(), true);
 
         // In legacy mode, root bypasses all file permissions

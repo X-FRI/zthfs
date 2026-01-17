@@ -54,6 +54,7 @@ pub mod config;
 pub mod core;
 pub mod errors;
 pub mod fs_impl;
+pub mod key_derivation;
 pub mod key_management;
 pub mod transactions;
 pub mod utils;
@@ -63,11 +64,12 @@ pub use config::{
     EncryptionConfig, FilesystemConfig, FilesystemConfigBuilder, IntegrityConfig, LogConfig,
     PerformanceConfig, SecurityConfig,
 };
-pub use core::encryption::EncryptionHandler;
+pub use core::encryption::{EncryptionHandler, NonceManager};
 pub use core::integrity::IntegrityHandler;
 pub use core::logging::{AccessLogEntry, LogHandler};
 pub use errors::{ZthfsError, ZthfsResult};
 pub use fs_impl::Zthfs;
+pub use key_derivation::{KeyDerivationConfig, fast_params, high_security_params};
 pub use key_management::{
     FileKeyStorage, InMemoryKeyStorage, KeyManager, KeyMetadata, KeyStorage, StoredKey,
     create_file_key_manager,
@@ -194,6 +196,7 @@ mod integration_tests {
                 algorithm: "invalid_algorithm".to_string(),
                 xattr_namespace: "user.zthfs".to_string(),
                 key: vec![1; 32], // Dummy key for test
+                hmac_key: None,
             },
             performance: PerformanceConfig::default(),
             security: SecurityConfig::default(),

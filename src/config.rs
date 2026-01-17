@@ -160,6 +160,9 @@ pub struct IntegrityConfig {
     pub xattr_namespace: String,
     /// Secret key for cryptographic integrity verification (32 bytes for BLAKE3)
     pub key: Vec<u8>,
+    /// HMAC signing key for signature verification (optional, 32 bytes recommended)
+    /// If set, checksums will be signed with HMAC-SHA256
+    pub hmac_key: Option<Vec<u8>>,
 }
 
 impl IntegrityConfig {
@@ -170,6 +173,7 @@ impl IntegrityConfig {
             algorithm: "blake3".to_string(),
             xattr_namespace: "user.zthfs".to_string(),
             key: EncryptionConfig::generate_key().to_vec(),
+            hmac_key: None,
         }
     }
 
@@ -180,7 +184,29 @@ impl IntegrityConfig {
             algorithm: "blake3".to_string(),
             xattr_namespace: "user.zthfs".to_string(),
             key,
+            hmac_key: None,
         }
+    }
+
+    /// Create a new IntegrityConfig with HMAC signing enabled
+    pub fn with_hmac_signing(key: Vec<u8>, hmac_key: Vec<u8>) -> Self {
+        Self {
+            enabled: true,
+            algorithm: "blake3".to_string(),
+            xattr_namespace: "user.zthfs".to_string(),
+            key,
+            hmac_key: Some(hmac_key),
+        }
+    }
+
+    /// Check if HMAC signing is enabled
+    pub fn hmac_enabled(&self) -> bool {
+        self.hmac_key.is_some() && self.hmac_key.as_ref().map(|k| k.len()).unwrap_or(0) >= 32
+    }
+
+    /// Get the HMAC key, validating its length
+    pub fn get_hmac_key(&self) -> Option<&[u8]> {
+        self.hmac_key.as_ref().filter(|k| k.len() >= 32).map(|k| k.as_slice())
     }
 }
 

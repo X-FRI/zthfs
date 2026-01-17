@@ -2,7 +2,11 @@ use crate::config::IntegrityConfig;
 use crate::errors::{ZthfsError, ZthfsResult};
 use blake3;
 use crc32c::crc32c;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 use std::path::Path;
+
+type HmacSha256 = Hmac<Sha256>;
 
 pub struct IntegrityHandler;
 
@@ -64,6 +68,7 @@ impl IntegrityHandler {
 
     /// Read the checksum from the extended attribute.
     /// Returns the checksum as bytes, with length depending on the algorithm.
+    /// If HMAC signing is enabled, verifies the signature before returning the checksum.
     pub fn get_checksum_from_xattr(
         real_path: &Path,
         config: &IntegrityConfig,
@@ -73,32 +78,105 @@ impl IntegrityHandler {
         }
 
         let xattr_name = format!("{}.checksum", config.xattr_namespace);
-        match xattr::get(real_path, &xattr_name) {
-            Ok(Some(value)) => {
-                // Validate checksum length based on algorithm
-                let expected_len = Self::get_checksum_length(&config.algorithm);
-                if value.len() == expected_len {
-                    Ok(Some(value))
-                } else {
-                    log::warn!(
-                        "Checksum length mismatch for algorithm {}: expected {}, got {}",
-                        config.algorithm,
-                        expected_len,
-                        value.len()
-                    );
-                    Ok(None)
+        let checksum_value = match xattr::get(real_path, &xattr_name) {
+            Ok(Some(value)) => value,
+            Ok(None) => return Ok(None),
+            Err(e) => {
+                log::debug!("Failed to read checksum xattr: {e}");
+                return Ok(None);
+            }
+        };
+
+        // Validate checksum length based on algorithm
+        let expected_len = Self::get_checksum_length(&config.algorithm);
+        if checksum_value.len() != expected_len {
+            log::warn!(
+                "Checksum length mismatch for algorithm {}: expected {}, got {}",
+                config.algorithm,
+                expected_len,
+                checksum_value.len()
+            );
+            return Ok(None);
+        }
+
+        // If HMAC signing is enabled, verify the signature
+        if let Some(hmac_key) = config.get_hmac_key() {
+            let sig_xattr_name = format!("{}.checksum_sig", config.xattr_namespace);
+            match xattr::get(real_path, &sig_xattr_name) {
+                Ok(Some(signature)) => {
+                    match Self::verify_hmac_signature(&checksum_value, &signature, hmac_key) {
+                        Ok(true) => {
+                            // Signature valid, return checksum
+                        }
+                        Ok(false) => {
+                            log::warn!("HMAC signature verification failed for checksum");
+                            return Ok(None);
+                        }
+                        Err(e) => {
+                            log::warn!("HMAC verification error: {e}");
+                            return Ok(None);
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("HMAC signing enabled but no signature found");
+                    return Ok(None);
+                }
+                Err(e) => {
+                    log::debug!("Failed to read signature xattr: {e}");
+                    return Ok(None);
                 }
             }
-            Ok(None) => Ok(None),
-            Err(e) => {
-                // If the file does not exist or for other reasons, ignore the error
-                log::debug!("Failed to read checksum xattr: {e}");
-                Ok(None)
-            }
+        }
+
+        Ok(Some(checksum_value))
+    }
+
+    /// Compute HMAC-SHA256 signature of a checksum
+    pub fn compute_hmac_signature(checksum: &[u8], hmac_key: &[u8]) -> ZthfsResult<Vec<u8>> {
+        if hmac_key.len() < 32 {
+            return Err(ZthfsError::Integrity(
+                "HMAC key must be at least 32 bytes".to_string(),
+            ));
+        }
+
+        let mut mac = HmacSha256::new_from_slice(hmac_key)
+            .map_err(|e| ZthfsError::Crypto(format!("HMAC initialization error: {e}")))?;
+        mac.update(checksum);
+        Ok(mac.finalize().into_bytes().to_vec())
+    }
+
+    /// Verify HMAC-SHA256 signature of a checksum
+    pub fn verify_hmac_signature(
+        checksum: &[u8],
+        signature: &[u8],
+        hmac_key: &[u8],
+    ) -> ZthfsResult<bool> {
+        if hmac_key.len() < 32 {
+            return Err(ZthfsError::Integrity(
+                "HMAC key must be at least 32 bytes".to_string(),
+            ));
+        }
+
+        let mut mac = HmacSha256::new_from_slice(hmac_key)
+            .map_err(|e| ZthfsError::Crypto(format!("HMAC initialization error: {e}")))?;
+        mac.update(checksum);
+
+        // Convert signature slice to array for verification
+        use hmac::digest::generic_array::GenericArray;
+        if signature.len() != 32 {
+            return Ok(false);
+        }
+        let sig_array = GenericArray::clone_from_slice(&signature[..32]);
+
+        match mac.verify(&sig_array) {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
         }
     }
 
     /// Write the computed checksum to the extended attribute of the file.
+    /// If HMAC signing is enabled, also stores the signature.
     pub fn set_checksum_xattr(
         real_path: &Path,
         checksum: &[u8],
@@ -124,6 +202,14 @@ impl IntegrityHandler {
         xattr::set(real_path, &xattr_name, checksum)
             .map_err(|e| ZthfsError::Integrity(format!("Failed to set checksum xattr: {e}")))?;
 
+        // If HMAC signing is enabled, compute and store the signature
+        if let Some(hmac_key) = config.get_hmac_key() {
+            let signature = Self::compute_hmac_signature(checksum, hmac_key)?;
+            let sig_xattr_name = format!("{}.checksum_sig", config.xattr_namespace);
+            xattr::set(real_path, &sig_xattr_name, &signature)
+                .map_err(|e| ZthfsError::Integrity(format!("Failed to set signature xattr: {e}")))?;
+        }
+
         Ok(())
     }
 
@@ -137,20 +223,22 @@ impl IntegrityHandler {
     }
 
     /// Remove the checksum extended attribute.
+    /// Also removes the HMAC signature if it exists.
     pub fn remove_checksum_xattr(real_path: &Path, config: &IntegrityConfig) -> ZthfsResult<()> {
         if !config.enabled {
             return Ok(());
         }
 
         let xattr_name = format!("{}.checksum", config.xattr_namespace);
-        match xattr::remove(real_path, &xattr_name) {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                // If the extended attribute does not exist, ignore the error
-                log::debug!("Failed to remove checksum xattr (may not exist): {e}");
-                Ok(())
-            }
-        }
+        let _ = xattr::remove(real_path, &xattr_name);
+        log::debug!("Removed checksum xattr (or it didn't exist)");
+
+        // Also remove the signature if HMAC signing was enabled
+        let sig_xattr_name = format!("{}.checksum_sig", config.xattr_namespace);
+        let _ = xattr::remove(real_path, &sig_xattr_name);
+        log::debug!("Removed signature xattr (or it didn't exist)");
+
+        Ok(())
     }
 
     /// Validate the integrity configuration.
@@ -283,6 +371,7 @@ mod tests {
             algorithm: "sha256".to_string(),
             xattr_namespace: "user.zthfs".to_string(),
             key: vec![1; 32], // Dummy key for test
+            hmac_key: None,
         };
         assert!(IntegrityHandler::validate_config(&config).is_err());
 
@@ -292,6 +381,7 @@ mod tests {
             algorithm: "crc32c".to_string(),
             xattr_namespace: "".to_string(),
             key: vec![1; 32], // Dummy key for test
+            hmac_key: None,
         };
         assert!(IntegrityHandler::validate_config(&config).is_err());
 
@@ -301,6 +391,7 @@ mod tests {
             algorithm: "invalid".to_string(),
             xattr_namespace: "".to_string(),
             key: vec![1; 32], // Dummy key for test
+            hmac_key: None,
         };
         assert!(IntegrityHandler::validate_config(&config).is_ok());
     }
@@ -363,6 +454,7 @@ mod tests {
             algorithm: "crc32c".to_string(),
             xattr_namespace: "user.test".to_string(),
             key: key.to_vec(),
+            hmac_key: None,
         };
 
         // Wrong length for CRC32c should fail
@@ -380,6 +472,7 @@ mod tests {
             algorithm: "blake3".to_string(),
             xattr_namespace: "user.test".to_string(),
             key: key.to_vec(),
+            hmac_key: None,
         };
 
         // Wrong length for BLAKE3 should fail
@@ -492,5 +585,137 @@ mod tests {
                 .to_string()
                 .contains("Unsupported algorithm")
         );
+    }
+
+    // ===== HMAC Signing Tests =====
+
+    #[test]
+    fn test_hmac_signature_computation() {
+        let checksum = b"test_checksum_value_32_bytes!!!!";
+        let hmac_key = b"0123456789abcdef0123456789abcdef"; // 32-byte key
+
+        let signature = IntegrityHandler::compute_hmac_signature(checksum, hmac_key).unwrap();
+        assert_eq!(signature.len(), 32); // HMAC-SHA256 produces 32 bytes
+    }
+
+    #[test]
+    fn test_hmac_signature_verification() {
+        let checksum = b"test_checksum_value_32_bytes!!!!";
+        let hmac_key = b"0123456789abcdef0123456789abcdef"; // 32-byte key
+
+        let signature = IntegrityHandler::compute_hmac_signature(checksum, hmac_key).unwrap();
+        assert!(IntegrityHandler::verify_hmac_signature(checksum, &signature, hmac_key).unwrap());
+    }
+
+    #[test]
+    fn test_hmac_signature_tampering_detection() {
+        let checksum = b"test_checksum_value_32_bytes!!!!";
+        let hmac_key = b"0123456789abcdef0123456789abcdef"; // 32-byte key
+
+        let signature = IntegrityHandler::compute_hmac_signature(checksum, hmac_key).unwrap();
+
+        // Tampered checksum should not verify
+        let tampered_checksum = b"tampered_checksum_value_32b!!";
+        assert!(!IntegrityHandler::verify_hmac_signature(tampered_checksum, &signature, hmac_key).unwrap());
+
+        // Tampered signature should not verify
+        let mut tampered_signature = signature.clone();
+        tampered_signature[0] ^= 0xFF;
+        assert!(!IntegrityHandler::verify_hmac_signature(checksum, &tampered_signature, hmac_key).unwrap());
+    }
+
+    #[test]
+    fn test_hmac_short_key_rejected() {
+        let checksum = b"test_checksum_value_32_bytes!!!!";
+        let short_key = b"short"; // Less than 32 bytes
+
+        let result = IntegrityHandler::compute_hmac_signature(checksum, short_key);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_integrity_config_hmac_methods() {
+        let key = vec![1u8; 32];
+        let hmac_key = vec![2u8; 32];
+
+        let config = IntegrityConfig::with_hmac_signing(key, hmac_key.clone());
+        assert!(config.hmac_enabled());
+        assert_eq!(config.get_hmac_key(), Some(hmac_key.as_slice()));
+
+        // Default config should not have HMAC enabled
+        let default_config = IntegrityConfig::new();
+        assert!(!default_config.hmac_enabled());
+        assert_eq!(default_config.get_hmac_key(), None);
+    }
+
+    #[test]
+    fn test_checksum_xattr_with_hmac() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let test_file = temp_dir.path().join("test_file.bin");
+        std::fs::write(&test_file, b"test data").unwrap();
+
+        let key = vec![1u8; 32];
+        let hmac_key = vec![2u8; 32];
+        let config = IntegrityConfig::with_hmac_signing(key, hmac_key);
+
+        let checksum = b"test_checksum_value_32_bytes!!!!";
+
+        // Set checksum with HMAC
+        IntegrityHandler::set_checksum_xattr(&test_file, checksum, &config).unwrap();
+
+        // Verify checksum was stored
+        let retrieved = IntegrityHandler::get_checksum_from_xattr(&test_file, &config).unwrap();
+        assert_eq!(retrieved, Some(checksum.to_vec()));
+
+        // Tamper with the checksum
+        xattr::set(&test_file, "user.zthfs.checksum", b"tampered_checksum_value_32b!!").unwrap();
+
+        // Tampered checksum should be rejected (HMAC verification fails)
+        let retrieved_tampered = IntegrityHandler::get_checksum_from_xattr(&test_file, &config).unwrap();
+        assert_eq!(retrieved_tampered, None); // Signature verification fails
+    }
+
+    #[test]
+    fn test_remove_checksum_with_signature() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let test_file = temp_dir.path().join("test_file.bin");
+        std::fs::write(&test_file, b"test data").unwrap();
+
+        let key = vec![1u8; 32];
+        let hmac_key = vec![2u8; 32];
+        let config = IntegrityConfig::with_hmac_signing(key, hmac_key);
+
+        let checksum = b"test_checksum_value_32_bytes!!!!";
+
+        // Set checksum with HMAC
+        IntegrityHandler::set_checksum_xattr(&test_file, checksum, &config).unwrap();
+
+        // Verify both are stored
+        assert!(xattr::get(&test_file, "user.zthfs.checksum").unwrap().is_some());
+        assert!(xattr::get(&test_file, "user.zthfs.checksum_sig").unwrap().is_some());
+
+        // Remove
+        IntegrityHandler::remove_checksum_xattr(&test_file, &config).unwrap();
+
+        // Verify both are removed
+        assert!(xattr::get(&test_file, "user.zthfs.checksum").unwrap().is_none());
+        assert!(xattr::get(&test_file, "user.zthfs.checksum_sig").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_hmac_different_checksums_different_signatures() {
+        let hmac_key = b"0123456789abcdef0123456789abcdef"; // 32-byte key
+
+        let checksum1 = b"checksum_one_32_bytes_value!!!!";
+        let checksum2 = b"checksum_two_32_bytes_value!!!!";
+
+        let sig1 = IntegrityHandler::compute_hmac_signature(checksum1, hmac_key).unwrap();
+        let sig2 = IntegrityHandler::compute_hmac_signature(checksum2, hmac_key).unwrap();
+
+        assert_ne!(sig1, sig2);
     }
 }

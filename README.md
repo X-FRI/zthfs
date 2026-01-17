@@ -2,159 +2,419 @@
 
 [![License](https://img.shields.io/badge/license-BSD3--Clause-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70+-blue.svg)](https://www.rust-lang.org)
-[![Coverage](https://img.shields.io/badge/coverage-67.35%25-green.svg)](coverage/tarpaulin-report.html)
+[![Coverage](https://img.shields.io/badge/coverage-64.89%25-green.svg)](coverage/tarpaulin-report.html)
 
-## Overview
+## Abstract
 
-ZTHFS implements a transparent encryption filesystem designed for medical data protection. The system provides cryptographic primitives and security mechanisms required for HIPAA/GDPR-compliant storage systems, delivered as a complete FUSE filesystem supporting transparent encryption and decryption operations.
+ZTHFS is a FUSE-based encrypted filesystem providing transparent encryption, integrity verification, and access control for sensitive data storage. The system implements AES-256-GCM encryption with counter-based nonce management, BLAKE3 integrity verification with optional HMAC signing, and a zero-trust security model where all users—including root—require explicit authorization.
 
-The architecture follows a layered design with eight core modules. The encryption and integrity modules form the cryptographic foundation, implementing AES-256-GCM encryption with BLAKE3-based integrity verification. The security module provides access control through POSIX permission checking coupled with user and group whitelists. Transaction management ensures atomic operations through write-ahead logging, while key management handles secure storage and rotation of cryptographic keys. The FUSE filesystem layer exposes these capabilities through standard filesystem operations.
+## System Architecture
 
-## Code Organization
-
-The filesystem implementation has been refactored into focused modules, each containing related operations with inline tests. This organization improves maintainability by reducing cognitive load when navigating the codebase.
-
-The modular structure separates concerns:
-
-- Path operations handle virtual-to-physical path translation
-- Inode operations manage unique identifier allocation and mapping
-- Attribute operations retrieve file metadata
-- File read/write operations handle data transfer with chunking support
-- Chunk operations optimize large file storage
-- Metadata operations persist file and directory attributes
-- Directory operations manage folder creation and removal
-- File creation, copy, and attribute modification operations provide complete file lifecycle management
-
-Test coverage reaches 67.35% across 1869 lines, ensuring critical paths are validated while allowing flexibility for future development.
-
-## Cryptographic Security
-
-Encryption employs AES-256-GCM with a unique nonce per file. The nonce derives from BLAKE3(path || nonce_seed), a construction ensuring deterministic nonce generation for a given path while preventing nonce reuse across different files. Deterministic nonces enable file recovery without additional nonce metadata, whereas the nonce_seed prevents predictability. This design balances storage efficiency with cryptographic safety, as nonce reuse in GCM mode would compromise authentication guarantees.
-
-Integrity verification supports two algorithms with distinct security properties. BLAKE3 provides cryptographic message authentication through keyed hashing for data requiring strong integrity guarantees. CRC32c offers a lightweight alternative where computational efficiency outweighs cryptographic strength. Checksums store as extended attributes, enabling verification without prior decryption.
-
-Timing attack protection leverages constant-time comparisons from the `subtle` crate. Authentication failures trigger exponential backoff delays starting at 100ms and doubling with each attempt, capped at 5 seconds. Failed attempt counting persists across requests, with lockout durations calculated as 2^(attempt_count - 1) seconds, maxing at 1 hour. This construction follows best practices for online attack mitigation where the cost of successful brute force increases exponentially with attempt count.
-
-## Access Control
-
-The security validator implements POSIX permission checking augmented with user and group whitelists. File access requires membership in `allowed_users` or `allowed_groups`, ensuring that even users with appropriate POSIX permissions cannot access files unless explicitly authorized. The permission checker extracts owner, group, and mode bits from file metadata, then applies standard POSIX rwx logic to determine access rights.
-
-Zero-trust mode, enabled via `with_zero_trust_root()`, removes the traditional Unix root bypass. In this configuration, uid 0 must pass the same permission checks as other users and must appear in the allowed users list. Root access attempts generate audit log entries at High severity, ensuring visibility of privileged operations. This design aligns with zero-trust principles where no actor receives implicit trust based solely on identity.
-
-## Transaction Management
-
-Write-ahead logging (WAL) ensures atomic operations and crash recovery. Each transaction records to a separate WAL file before execution, creating a durable log that survives system failures. The transaction lifecycle progresses through three states:
+The system adopts a layered architecture with clear separation of concerns:
 
 ```mermaid
-stateDiagram-v2
-    [*] --> InProgress: begin_transaction()
-    InProgress --> InProgress: write WAL entry
-    InProgress --> Committed: execute operations
-    Committed --> [*]: update metadata
-    InProgress --> RolledBack: crash/rollback
+graph TB
+    subgraph "Application Layer"
+        App[User Applications]
+    end
+
+    subgraph "FUSE Interface"
+        Fuse[FUSE Kernel Module]
+    end
+
+    subgraph "ZTHFS Core"
+        subgraph "Filesystem Operations"
+            Read[read/write]
+            Create[create/unlink]
+            Attr[getattr/setattr]
+            Dir[readdir/mkdir/rmdir]
+            Rename[rename]
+        end
+
+        subgraph "Security Services"
+            Enc[Encryption Handler]
+            Int[Integrity Handler]
+            Sec[Security Validator]
+            Key[Key Manager]
+            KDF[Key Derivation]
+        end
+    end
+
+    subgraph "Storage Layer"
+        DB[(sled Database<br/>Inode Mappings)]
+        Data[Encrypted Files<br/>+ Extended Attributes]
+        Meta[Metadata Files<br/>JSON Format]
+        WAL[Write-Ahead Log]
+    end
+
+    App --> Fuse
+    Fuse --> Read
+    Fuse --> Create
+    Fuse --> Attr
+    Fuse --> Dir
+    Fuse --> Rename
+
+    Read --> Sec
+    Create --> Sec
+    Attr --> Sec
+    Dir --> Sec
+    Rename --> Sec
+
+    Sec --> Enc
+    Read --> Enc
+    Create --> Enc
+
+    Enc --> Int
+    Int --> Data
+
+    Create --> DB
+    Dir --> DB
+    Rename --> DB
+    Create --> Meta
+    Create --> WAL
+
+    Key --> Enc
+    KDF --> Key
 ```
 
-On startup, the WAL scans for incomplete transactions and automatically rolls them back, preventing partially-applied operations from corrupting filesystem state.
+## Data Flow
 
-Copy-on-write (COW) primitives enable atomic file updates. The `atomic_write` function writes data to a temporary file, syncs to disk, then renames over the target. POSIX guarantees atomic rename operations, preventing partial writes from becoming visible.
+### Write Operation
 
-## Key Management
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant Fuse as FUSE
+    participant Sec as Security Validator
+    participant Enc as Encryption Handler
+    participant Nonce as NonceManager
+    participant Int as Integrity Handler
+    participant Disk as Storage
 
-The key management system provides a pluggable storage interface. `InMemoryKeyStorage` serves testing scenarios where persistence is unnecessary. `FileKeyStorage` encrypts keys at rest using a master key derived from system-specific entropy (hostname, machine-id, username). This derivation ensures that keys extracted from one system cannot be decrypted on another, adding physical security.
+    App->>Fuse: write(path, data, offset)
+    Fuse->>Sec: validate_access(uid, gid, path)
+    alt Access Denied
+        Sec-->>Fuse: PermissionDenied
+        Fuse-->>App: EACCES
+    else Access Allowed
+        Sec-->>Fuse: Authorized
 
-Each key stores with metadata including version number, creation timestamp, and expiration time. Key rotation generates a new version with an incremented version counter. The old version remains available until manually deleted, supporting gradual key migration.
+        Fuse->>Nonce: get_counter(path)
+        Nonce->>Nonce: BLAKE3(path || seed || counter)
+        Nonce-->>Enc: nonce
 
-## Filesystem Operations
+        Enc->>Enc: aes256_gcm_seal(data, nonce)
+        Enc-->>Fuse: ciphertext
 
-The FUSE implementation provides fourteen operations covering standard filesystem functionality. Path resolution maps filesystem paths to internal inodes through bidirectional mappings stored in a sled database. File operations support chunked storage for large files, with configurable chunk sizes defaulting to 4MB.
+        Fuse->>Int: compute_checksum(ciphertext)
+        Int->>Int: blake3_hash(ciphertext)
+        Int->>Int: hmac_sign(checksum)
+        Int-->>Fuse: checksum + signature
 
-Directory operations use marker files (`.zthfs_dir`) to persist directory metadata, enabling attribute preservation across filesystem remounts. Empty directory checks prevent removal of non-empty directories. Atomic rename operations move both metadata and chunk files using database batches, ensuring failures during rename do not result in partially-moved files.
+        Fuse->>Disk: write(ciphertext)
+        Fuse->>Disk: set_xattr("user.checksum")
+        Fuse->>Disk: set_xattr("user.hmac")
+        Fuse->>Nonce: increment_counter(path)
 
-File attribute modification supports chmod, chown, utime, and truncate operations through the `setattr` interface. Time conversions handle both absolute timestamps and the special `TimeOrNow::Now` value for utime operations. Permission checking occurs before attribute modification.
+        Fuse-->>App: bytes_written
+    end
+```
 
-The complete operation set includes lookup, getattr, read, write, readdir, create, unlink, mkdir, rmdir, rename, setattr, open, release, and fsync. All operations include permission checks and audit logging.
+### Read Operation
 
-## Usage
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant Fuse as FUSE
+    participant Sec as Security Validator
+    participant Disk as Storage
+    participant Int as Integrity Handler
+    participant Enc as Encryption Handler
 
-### Library API
+    App->>Fuse: read(path, size, offset)
+    Fuse->>Sec: validate_access(uid, gid, path)
+    alt Access Denied
+        Sec-->>Fuse: PermissionDenied
+        Fuse-->>App: EACCES
+    else Access Allowed
+        Sec-->>Fuse: Authorized
 
-Core modules expose a Rust API for integration into applications.
+        Fuse->>Disk: read ciphertext
+        Fuse->>Disk: get_xattr("user.checksum")
+
+        Disk-->>Int: ciphertext, checksum
+        Int->>Int: blake3_verify(ciphertext, checksum)
+        Int->>Int: hmac_verify(checksum)
+        alt Verification Failed
+            Int-->>Fuse: ChecksumMismatch
+            Fuse-->>App: EIO
+        else Verification Passed
+            Int-->>Fuse: Valid
+
+            Disk-->>Enc: ciphertext
+            Enc->>Enc: aes256_gcm_open(ciphertext, nonce)
+            Enc-->>Fuse: plaintext
+
+            Fuse-->>App: plaintext
+        end
+    end
+```
+
+## Cryptographic Design
+
+### Encryption
+
+ZTHFS employs AES-256-GCM for authenticated encryption. The critical security property—nonce uniqueness—is enforced through a counter-based scheme where each file maintains a persistent counter stored as an extended attribute.
 
 ```rust
 use zthfs::{
-    core::encryption::EncryptionHandler,
-    core::integrity::IntegrityHandler,
+    core::encryption::{EncryptionHandler, NonceManager},
     config::EncryptionConfig,
 };
 
+// Production deployment configuration
 let config = EncryptionConfig::random()?;
-let handler = EncryptionHandler::new(&config);
-let encrypted = handler.encrypt(data, "/path/to/file")?;
+let nonce_manager = NonceManager::new(data_dir.into());
+let handler = EncryptionHandler::with_nonce_manager(&config, Arc::new(nonce_manager));
 
-let checksum = IntegrityHandler::compute_checksum(
-    &encrypted, "blake3", &config.key,
-)?;
+// Per-file unique nonce derived from:
+// nonce = BLAKE3(path || nonce_seed || counter)
+let encrypted = handler.encrypt(plaintext, "/path/to/file")?;
 ```
 
-### Command Line Interface
+**Nonce uniqueness requirement**: GCM mode nonce reuse enables plaintext recovery through XOR analysis of ciphertexts encrypted with the same key and nonce. The counter-based approach guarantees uniqueness across all encryption operations for a given file path.
 
-The binary provides subcommands for filesystem management. `init` generates a configuration file with cryptographically secure random keys. `validate` checks configuration file syntax and security settings. `mount` mounts the FUSE filesystem using the specified configuration, while `unmount` cleanly unmounts. `health` displays component status for monitoring. `demo` runs cryptographic operations for verification. `info` shows version and build information.
+### Integrity Verification
 
-## Testing
+The system provides two levels of integrity protection:
 
-The test suite comprises 369 unit tests covering cryptographic operations, security validation, key management, transaction handling, and filesystem operations. Test coverage reaches 67.35% across the codebase.
+1. **BLAKE3 checksums**: Cryptographic hash of encrypted data stored as extended attributes
+2. **HMAC-SHA256 signing**: Optional signature to prevent checksum tampering by attackers with disk write access
 
-Execute `cargo test --lib` to run the test suite. FUSE integration tests exist but require root privileges and are marked as ignored.
+```rust
+use zthfs::{
+    core::integrity::IntegrityHandler,
+    config::IntegrityConfig,
+};
 
-```bash
-# Run unit tests
-cargo test --lib
+// With HMAC signing for tamper detection
+let config = IntegrityConfig::with_hmac_signing(key, hmac_key);
+let checksum = IntegrityHandler::compute_checksum(&ciphertext, "blake3", &config.key)?;
+let signature = IntegrityHandler::compute_hmac_signature(&checksum, &config.hmac_key)?;
+```
 
-# Run with coverage
-cargo tarpaulin --workspace --exclude-files '*/tests/*' --out Html
+### Key Derivation
 
-# Check code quality
-cargo clippy --all-targets
+Passphrase-protected key storage uses Argon2id, a memory-hard key derivation function resistant to GPU and ASIC attacks. The default parameters follow OWASP recommendations for interactive logins:
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| Memory Cost | 64 MiB | Memory required per iteration |
+| Time Cost | 3 | Number of iterations |
+| Parallelism | 4 | Degree of parallelism |
+| Salt Length | 16 bytes | Cryptographically random salt |
+
+```rust
+use zthfs::key_derivation::{KeyDerivation, KeyDerivationConfig};
+
+let config = KeyDerivationConfig::high_security();
+let master_key = KeyDerivation::derive_key("passphrase", &config)?;
+```
+
+## Access Control
+
+The zero-trust security model requires all users—including root—to satisfy three independent conditions:
+
+1. **Whitelist membership**: User or group must appear in the explicit allowlist
+2. **POSIX permissions**: Standard rwx bits must grant the requested operation
+3. **Audit logging**: All access attempts are logged at appropriate severity levels
+
+```rust
+use zthfs::fs_impl::security::SecurityValidator;
+
+// Zero-trust mode (default): root has no special privileges
+let validator = SecurityValidator::new(config);
+
+// Legacy mode: root bypasses permission checks (not recommended)
+let validator = SecurityValidator::with_legacy_root(config);
+```
+
+## Storage Organization
+
+```
+/data/
+├── zthfs.db                    # sled database: inode ↔ path mappings
+├── inodes/                      # Encrypted file storage
+│   └── {inode_hash}/
+│       ├── data.0              # Chunk 0 (4 MB default)
+│       ├── data.1              # Chunk 1
+│       ├── ...
+│       └── metadata.json       # Chunk metadata
+├── keys/
+│   └── master.key.enc          # Encrypted master key
+├── wal/
+│   └── {transaction_id}.wal    # Write-ahead log entries
+└── zthfs.log                    # Audit log
+```
+
+## Chunked File Storage
+
+Files exceeding the configured chunk size (default: 4 MB) are split into chunks. This design enables:
+
+- **Efficient partial writes**: Only modified chunks are re-encrypted
+- **Parallel I/O**: Chunks can be read/written concurrently
+- **Memory efficiency**: Operations need not load entire files into memory
+
+```mermaid
+graph LR
+    subgraph "Large File"
+        File[100 MB File]
+    end
+
+    subgraph "Chunked Storage"
+        C1[Chunk 0<br/>0-4 MB]
+        C2[Chunk 1<br/>4-8 MB]
+        C3[Chunk 2<br/>8-12 MB]
+        Cn[Chunk 24<br/>96-100 MB]
+    end
+
+    subgraph "Disk"
+        E1[encrypted.0]
+        E2[encrypted.1]
+        E3[encrypted.2]
+        En[encrypted.24]
+        Meta[metadata.json]
+    end
+
+    File --> C1
+    File --> C2
+    File --> C3
+    File --> Cn
+
+    C1 --> E1
+    C2 --> E2
+    C3 --> E3
+    Cn --> En
+
+    C1 --> Meta
+    C2 --> Meta
+    C3 --> Meta
+    Cn --> Meta
+```
+
+## Transaction Management
+
+Atomic operations are guaranteed through write-ahead logging (WAL):
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pending: begin_transaction()
+    Pending --> WAL: write_operation()
+    WAL --> WAL: log_to_disk()
+    WAL --> Executing: flush_complete()
+    Executing --> Committed: operations_success()
+    Executing --> RolledBack: operations_failed()
+    Committed --> [*]: cleanup_wal()
+    RolledBack --> [*]: cleanup_wal()
+```
+
+On startup, the WAL is scanned for incomplete transactions which are automatically rolled back, ensuring filesystem consistency after crashes.
+
+## Configuration
+
+The filesystem accepts a TOML configuration file:
+
+```toml
+[data_dir]
+path = "/var/lib/zthfs"
+
+[encryption]
+algorithm = "aes256-gcm"
+key_size = 32
+nonce_seed = "base64-encoded-csprng-seed"
+
+[integrity]
+algorithm = "blake3"
+enable_hmac = true
+
+[security]
+zero_trust_root = true
+allowed_users = ["alice", "bob"]
+allowed_groups = ["medical-team"]
+max_failed_attempts = 3
+lockout_duration = 3600
+
+[key_derivation]
+algorithm = "argon2id"
+memory_cost = 65536    # 64 MiB
+time_cost = 3
+parallelism = 4
+
+[performance]
+chunk_size = 4194304   # 4 MB
+cache_size = 256
 ```
 
 ## Implementation Status
 
-Complete modules include encryption, integrity, logging, configuration, security validation, transactions, key management, and the FUSE filesystem implementation. All fourteen FUSE operations are implemented: lookup, getattr, read, write, readdir, create, unlink, mkdir, rmdir, rename, setattr, open, release, and fsync.
+| Module | Status | Description |
+|--------|--------|-------------|
+| Encryption | Complete | AES-256-GCM with NonceManager |
+| Integrity | Complete | BLAKE3 + HMAC-SHA256 |
+| Security | Complete | Zero-trust access control |
+| Key Management | Complete | File-based storage with rotation |
+| Key Derivation | Complete | Argon2id KDF |
+| FUSE Operations | Complete | All 14 operations implemented |
+| HSM/KMS Backend | Planned | Hardware security module integration |
+| Distributed Storage | Planned | Multi-node replication |
 
-Not implemented features include HSM/KMS backends, performance monitoring metrics, and comprehensive integration tests. These represent areas for future development rather than gaps in core functionality.
+## Testing
 
-## Development Roadmap
+```bash
+# Unit tests
+cargo test --lib
 
-Short-term priorities focus on improving test coverage and production deployment tooling. Medium-term goals cover HSM/KMS backend implementations for environments requiring hardware security modules. Long-term objectives target distributed storage backends and multi-tenant isolation mechanisms.
+# Property-based tests (256 cases per property)
+cargo test --lib property_tests
+
+# Coverage analysis
+cargo tarpaulin --workspace --exclude-files '*/tests/*' --out Html
+
+# Linting
+cargo clippy --all-targets
+```
+
+Current test coverage: **64.89%** (1571/2421 lines)
+
+## Security Considerations
+
+### Threat Model
+
+The system mitigates the following threats:
+
+| Threat | Mitigation |
+|--------|------------|
+| Unauthorized data access | AES-256-GCM encryption + access control |
+| Data tampering | BLAKE3 checksums + HMAC signatures |
+| Nonce reuse attacks | Counter-based nonce generation |
+| Password cracking | Argon2id with OWASP parameters |
+| Privilege escalation | Zero-trust root model |
+| Timing attacks | Constant-time comparisons |
+
+### Known Limitations
+
+1. **Metadata leakage**: File sizes, access patterns, and directory structure remain visible
+2. **Single point of failure**: Loss of the master key renders data permanently inaccessible
+3. **Performance overhead**: Encryption/integrity operations add latency to all I/O
+
+## References
+
+- NIST Special Publication 800-38D: Recommendation for Block Cipher Modes of Operation
+- OWASP Argon2id Guidelines: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+- FUSE Documentation: https://libfuse.github.io/
 
 ## License
 
-```
+BSD 3-Clause - see [LICENSE](LICENSE)
+
 Copyright (c) 2025 Somhairle H. Marisol
-
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without modification,
-are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright notice,
-      this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright notice,
-      this list of conditions and the following disclaimer in the documentation
-      and/or other materials provided with the distribution.
-    * Neither the name of ZTHFS nor the names of its contributors
-      may be used to endorse or promote products derived from this software
-      without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
-CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-```
