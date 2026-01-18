@@ -3,7 +3,7 @@
 //! Tests how the filesystem handles corrupted data, metadata, and other integrity issues.
 //! These tests verify error recovery and reporting for corruption scenarios.
 
-use crate::config::{FilesystemConfigBuilder, IntegrityConfig, LogConfig};
+use crate::config::{EncryptionConfig, FilesystemConfigBuilder, IntegrityConfig, LogConfig};
 use crate::fs_impl::Zthfs;
 use crate::fs_impl::{file_create, file_read, file_write, metadata_ops, path_ops};
 use std::path::Path;
@@ -18,6 +18,7 @@ fn create_fs_with_integrity() -> (tempfile::TempDir, Zthfs) {
 
     let mut config = FilesystemConfigBuilder::new()
         .data_dir(temp_dir.path().to_string_lossy().to_string())
+        .encryption(EncryptionConfig::with_random_keys())
         .logging(LogConfig {
             enabled: false,
             file_path: String::new(),
@@ -204,6 +205,7 @@ fn test_recover_from_inode_conflict() {
 
     let config = FilesystemConfigBuilder::new()
         .data_dir(temp_dir.path().to_string_lossy().to_string())
+        .encryption(EncryptionConfig::with_random_keys())
         .logging(LogConfig {
             enabled: false,
             file_path: String::new(),
@@ -264,6 +266,7 @@ fn test_corrupted_database_recovery() {
 
     let config = FilesystemConfigBuilder::new()
         .data_dir(temp_dir.path().to_string_lossy().to_string())
+        .encryption(EncryptionConfig::with_random_keys())
         .logging(LogConfig {
             enabled: false,
             file_path: String::new(),

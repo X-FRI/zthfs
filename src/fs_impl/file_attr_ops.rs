@@ -151,7 +151,7 @@ pub fn truncate_file(fs: &Zthfs, path: &Path, new_size: u64) -> ZthfsResult<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{FilesystemConfigBuilder, LogConfig};
+    use crate::config::{EncryptionConfig, FilesystemConfigBuilder, LogConfig};
     use crate::fs_impl::attr_ops;
 
     /// Helper function to create a test filesystem instance
@@ -162,6 +162,7 @@ mod tests {
 
         let config = FilesystemConfigBuilder::new()
             .data_dir(temp_dir.path().join("data").to_string_lossy().to_string())
+            .encryption(EncryptionConfig::with_random_keys())
             .logging(LogConfig {
                 enabled: true,
                 file_path: log_dir.join("test.log").to_string_lossy().to_string(),

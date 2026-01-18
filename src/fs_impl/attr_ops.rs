@@ -95,7 +95,7 @@ pub fn get_attr(fs: &Zthfs, path: &Path) -> ZthfsResult<FileAttr> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{FilesystemConfigBuilder, LogConfig};
+    use crate::config::{EncryptionConfig, FilesystemConfigBuilder, LogConfig};
 
     /// Helper function to create a test filesystem instance
     fn create_test_fs() -> (tempfile::TempDir, Zthfs) {
@@ -105,6 +105,7 @@ mod tests {
 
         let config = FilesystemConfigBuilder::new()
             .data_dir(temp_dir.path().join("data").to_string_lossy().to_string())
+            .encryption(EncryptionConfig::with_random_keys())
             .logging(LogConfig {
                 enabled: true,
                 file_path: log_dir.join("test.log").to_string_lossy().to_string(),

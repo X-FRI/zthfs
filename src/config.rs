@@ -455,7 +455,10 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = FilesystemConfig::default();
+        // Without production feature, default config passes basic validation
         assert!(config.validate().is_ok());
+        // But it has an insecure key
+        assert!(config.encryption.is_insecure_default());
     }
 
     #[test]
@@ -467,9 +470,10 @@ mod tests {
         };
         assert!(config.validate().is_err());
 
-        // Restore default values
+        // Restore default values with secure key
         let config = FilesystemConfig {
             data_dir: "/tmp/test".to_string(),
+            encryption: EncryptionConfig::with_random_keys(),
             ..Default::default()
         };
         assert!(config.validate().is_ok());
@@ -480,6 +484,7 @@ mod tests {
         let config = FilesystemConfigBuilder::new()
             .data_dir("/tmp/test".to_string())
             .mount_point("/mnt/test".to_string())
+            .encryption(EncryptionConfig::with_random_keys())
             .build()
             .unwrap();
 

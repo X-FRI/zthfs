@@ -3,7 +3,7 @@
 //! Tests various permission denial scenarios in the filesystem.
 //! These tests verify that the filesystem correctly handles unauthorized access attempts.
 
-use crate::config::{FilesystemConfigBuilder, LogConfig, SecurityConfig};
+use crate::config::{EncryptionConfig, FilesystemConfigBuilder, LogConfig, SecurityConfig};
 use crate::fs_impl::Zthfs;
 use crate::fs_impl::security::{FileAccess, SecurityValidator};
 use tempfile::TempDir;
@@ -14,6 +14,7 @@ fn create_fs_with_security(security: SecurityConfig) -> (TempDir, Zthfs) {
 
     let config = FilesystemConfigBuilder::new()
         .data_dir(temp_dir.path().to_string_lossy().to_string())
+        .encryption(EncryptionConfig::with_random_keys())
         .logging(LogConfig {
             enabled: false,
             file_path: String::new(),
