@@ -411,3 +411,81 @@ fn test_create_unauthorized_user() {
     assert!(result.is_err(), "unauthorized user should be denied");
     assert_eq!(result.unwrap_err(), libc::EACCES, "should return EACCES");
 }
+
+// ============================================================================
+// Read Tests
+// ============================================================================
+
+/// Simulate read by using Zthfs's internal file reading
+fn simulate_read(fs: &mut Zthfs, req: &TestRequest, ino: u64) -> Result<Vec<u8>, i32> {
+    let uid = req.uid;
+    let gid = req.gid;
+
+    // Get the path from inode
+    let path = match fs.get_path_for_inode(ino) {
+        Some(p) => p,
+        None => return Err(libc::ENOENT),
+    };
+
+    // Check permission
+    if !fs.check_permission(uid, gid) {
+        return Err(libc::EACCES);
+    }
+
+    // Read the file (encrypted content)
+    match zthfs::fs_impl::file_read::read_file(fs, &path) {
+        Ok(data) => Ok(data),
+        Err(_) => Err(libc::EIO),
+    }
+}
+
+#[test]
+fn test_read_existing_file() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    // Create a test file with known content using write_file (which encrypts)
+    let file_path = std::path::Path::new("/readme.txt");
+    zthfs::fs_impl::file_write::write_file(&fs, file_path, b"Hello, read test!").unwrap();
+
+    // Get inode for the file
+    let ino = fs.get_or_create_inode(file_path).unwrap();
+
+    let req = TestRequest::unprivileged();
+
+    let result = simulate_read(&mut fs, &req, ino);
+
+    assert!(result.is_ok(), "read should succeed");
+    let data = result.unwrap();
+    // Content should match the original (decrypted by read_file)
+    assert_eq!(data, b"Hello, read test!", "decrypted content should match original");
+}
+
+#[test]
+fn test_read_nonexistent_file() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    let req = TestRequest::unprivileged();
+
+    // Try to read from a nonexistent inode
+    let result = simulate_read(&mut fs, &req, 99999);
+
+    // Should fail
+    assert!(result.is_err(), "read should fail");
+}
+
+#[test]
+fn test_read_unauthorized_user() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    let file_path = std::path::Path::new("/protected.txt");
+    zthfs::fs_impl::file_write::write_file(&fs, file_path, b"Secret data").unwrap();
+
+    let ino = fs.get_or_create_inode(file_path).unwrap();
+
+    let req = TestRequest::new(99999, 99999);
+
+    let result = simulate_read(&mut fs, &req, ino);
+
+    assert!(result.is_err(), "unauthorized user should be denied");
+    assert_eq!(result.unwrap_err(), libc::EACCES, "should return EACCES");
+}
