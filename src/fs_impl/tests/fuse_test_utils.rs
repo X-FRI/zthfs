@@ -3,7 +3,7 @@
 //! Provides mock structures and helpers for testing FUSE callbacks
 //! without needing actual FUSE mounting.
 
-use crate::config::{FilesystemConfig, FilesystemConfigBuilder, LogConfig};
+use crate::config::{EncryptionConfig, FilesystemConfig, FilesystemConfigBuilder, LogConfig};
 use crate::fs_impl::Zthfs;
 use tempfile::TempDir;
 
@@ -106,9 +106,10 @@ pub fn create_test_config(data_dir: &std::path::Path) -> FilesystemConfig {
     let current_uid = unsafe { libc::getuid() };
     let current_gid = unsafe { libc::getgid() };
 
-    // Build base config
+    // Build base config with secure random keys for testing
     let mut config = FilesystemConfigBuilder::new()
         .data_dir(data_dir.to_string_lossy().to_string())
+        .encryption(EncryptionConfig::with_random_keys())
         .logging(LogConfig {
             enabled: false,
             file_path: String::new(),
