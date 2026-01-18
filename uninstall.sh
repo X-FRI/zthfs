@@ -1,6 +1,6 @@
 #!/bin/bash
-# ZTHFS Automated Uninstallation Script
-# This script removes ZTHFS from a Linux system
+# ZTHFS Uninstallation Script
+# This script removes ZTHFS from the system while preserving data by default
 
 set -e
 
@@ -28,232 +28,260 @@ log_success() {
     echo -e "${GREEN}[SUCCESS]${NC} $1"
 }
 
+# Configuration
+CONFIG_FILE="${CONFIG_FILE:-/etc/zthfs/config.json}"
+MOUNT_POINT="${MOUNT_POINT:-/mnt/zthfs}"
+DATA_DIR="/var/lib/zthfs/data"
+
 # Check if running as root
 if [[ $EUID -ne 0 ]]; then
    log_error "This script must be run as root (sudo)"
    exit 1
 fi
 
-log_warn "Starting ZTHFS uninstallation..."
-log_warn "This will remove ZTHFS completely from the system."
-log_warn "Make sure to backup any important data before proceeding!"
+# Display warning banner
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo -e "${RED}ZTHFS Uninstallation${NC}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo -e "${YELLOW}WARNING: This will remove ZTHFS from your system.${NC}"
+echo ""
+echo "Before proceeding, ensure you have:"
+echo "  1. Backed up your encryption keys ($CONFIG_FILE)"
+echo "  2. Backed up any important data in $MOUNT_POINT"
+echo "  3. Unmounted the filesystem (or let this script do it)"
+echo ""
+read -p "Do you want to continue? (yes/no): " -r
+echo ""
 
-# Ask for confirmation
-read -p "Are you sure you want to uninstall ZTHFS? (yes/no): " confirm
-if [[ "$confirm" != "yes" ]]; then
+if [[ ! "$REPLY" =~ ^[Yy][Ee][Ss]$ ]]; then
     log_info "Uninstallation cancelled."
     exit 0
 fi
 
-# Ask about data removal
-read -p "Do you want to remove all ZTHFS data and configurations? (yes/no): " remove_data
-if [[ "$remove_data" != "yes" ]]; then
-    log_info "Data will be preserved."
-    PRESERVE_DATA=true
+# Get the invoking user
+if [[ -n "$SUDO_USER" ]]; then
+    REAL_USER="$SUDO_USER"
 else
-    log_warn "All ZTHFS data and configurations will be removed!"
-    PRESERVE_DATA=false
+    REAL_USER="${USER:-root}"
 fi
 
-# Detect OS (same as deploy.sh)
-if [[ -f /etc/debian_version ]]; then
-    OS="debian"
-    PACKAGE_MANAGER="apt-get"
-elif [[ -f /etc/redhat-release ]]; then
-    OS="redhat"
-    PACKAGE_MANAGER="yum"
-elif [[ -f /etc/fedora-release ]]; then
-    OS="fedora"
-    PACKAGE_MANAGER="dnf"
-elif [[ -f /etc/SuSE-release ]] || grep -q "openSUSE" /etc/os-release 2>/dev/null; then
-    OS="opensuse"
-    PACKAGE_MANAGER="zypper"
-else
-    log_error "Unsupported operating system"
-    exit 1
-fi
+# Track what was preserved
+PRESERVED_ITEMS=()
 
-log_info "Detected OS: $OS"
+# ============================================================================
+# Step 1: Stop and disable services
+# ============================================================================
+log_info "Step 1/7: Stopping ZTHFS services..."
 
-# Stop and disable systemd service
-log_info "Stopping and disabling systemd service..."
-if systemctl is-active --quiet zthfs 2>/dev/null; then
+if systemctl is-active --quiet zthfs.service 2>/dev/null; then
+    systemctl stop zthfs.service
+    log_success "Stopped zthfs.service"
+elif systemctl is-active --quiet zthfs 2>/dev/null; then
     systemctl stop zthfs
-    log_info "ZTHFS service stopped"
+    log_success "Stopped zthfs"
+else
+    log_info "Service not running"
 fi
 
-if systemctl is-enabled --quiet zthfs 2>/dev/null; then
-    systemctl disable zthfs
-    log_info "ZTHFS service disabled"
+if systemctl is-enabled --quiet zthfs.service 2>/dev/null; then
+    systemctl disable zthfs.service
+    log_success "Disabled zthfs.service"
 fi
 
-# Remove systemd service file
-if [[ -f /etc/systemd/system/zthfs.service ]]; then
-    rm -f /etc/systemd/system/zthfs.service
-    log_info "Systemd service file removed"
+if systemctl is-enabled --quiet zthfs-unmount.service 2>/dev/null; then
+    systemctl disable zthfs-unmount.service
+    log_success "Disabled zthfs-unmount.service"
 fi
 
-# Reload systemd
+# ============================================================================
+# Step 2: Unmount filesystem
+# ============================================================================
+log_info "Step 2/7: Unmounting ZTHFS..."
+
+MOUNTED=false
+if mountpoint -q "$MOUNT_POINT" 2>/dev/null; then
+    MOUNTED=true
+    /usr/local/bin/zthfs unmount "$MOUNT_POINT" 2>/dev/null || \
+    fusermount -u "$MOUNT_POINT" 2>/dev/null || \
+    umount "$MOUNT_POINT" 2>/dev/null || {
+        log_warn "Could not unmount $MOUNT_POINT"
+        log_info "You may need to manually: umount $MOUNT_POINT"
+    }
+    log_success "Filesystem unmounted"
+else
+    log_info "Filesystem not mounted at $MOUNT_POINT"
+fi
+
+# Check for any other ZTHFS mounts
+for mp in $(mount | grep -E "type.*fuse.*zthfs|zthfs on" | awk '{print $3}'); do
+    log_info "Unmounting $mp..."
+    umount "$mp" 2>/dev/null || fusermount -u "$mp" 2>/dev/null || true
+done
+
+# ============================================================================
+# Step 3: Remove systemd services
+# ============================================================================
+log_info "Step 3/7: Removing systemd service files..."
+
+for svc in zthfs.service zthfs-unmount.service; do
+    if [[ -f "/etc/systemd/system/$svc" ]]; then
+        rm -f "/etc/systemd/system/$svc"
+        log_success "Removed $svc"
+    fi
+done
+
+# Remove override directories
+for dir in /etc/systemd/system/zthfs.service.d /etc/systemd/system/zthfs-unmount.service.d; do
+    if [[ -d "$dir" ]]; then
+        rm -rf "$dir"
+        log_success "Removed $dir"
+    fi
+done
+
 systemctl daemon-reload
+systemctl reset-failed 2>/dev/null || true
 
-# Try to unmount any mounted ZTHFS filesystems
-log_info "Checking for mounted ZTHFS filesystems..."
-if mount | grep -q "zthfs"; then
-    log_warn "Found mounted ZTHFS filesystems. Attempting to unmount..."
-    # Try to unmount common mount points
-    for mount_point in /mnt/zthfs /mnt/medical; do
-        if mount | grep -q "$mount_point"; then
-            log_info "Attempting to unmount $mount_point"
-            umount "$mount_point" 2>/dev/null || fusermount -u "$mount_point" 2>/dev/null || true
-        fi
-    done
-fi
+# ============================================================================
+# Step 4: Remove binary
+# ============================================================================
+log_info "Step 4/7: Removing ZTHFS binary..."
 
-# Remove binary
-if [[ -f /usr/local/bin/zthfs ]]; then
+if [[ -f "/usr/local/bin/zthfs" ]]; then
     rm -f /usr/local/bin/zthfs
-    log_info "ZTHFS binary removed from /usr/local/bin/"
+    log_success "Binary removed"
+else
+    log_info "Binary not found"
 fi
 
-# Handle data and configuration removal based on user choice
-if [[ "$PRESERVE_DATA" == "true" ]]; then
-    log_info "Preserving data directories as requested."
-    log_warn "You can manually remove these directories later:"
-    log_warn "  - /var/lib/zthfs"
-    log_warn "  - /var/log/zthfs"
-    log_warn "  - /etc/zthfs"
-    log_warn "  - /mnt/zthfs (if empty)"
-else
-    # Remove data directories
-    log_info "Removing data directories..."
-    if [[ -d /var/lib/zthfs ]]; then
+# ============================================================================
+# Step 5: Handle data directory
+# ============================================================================
+log_info "Step 5/7: Handling data directory..."
+
+echo ""
+echo -ne "Remove data directory ($DATA_DIR)? "
+echo -ne "${YELLOW}This will delete ALL encrypted data.${NC}"
+echo -n " (yes/no): "
+read -r
+if [[ "$REPLY" =~ ^[Yy][Ee][Ss]$ ]]; then
+    if [[ -d "/var/lib/zthfs" ]]; then
         rm -rf /var/lib/zthfs
-        log_info "Removed /var/lib/zthfs"
+        log_success "Data directory removed"
     fi
-
-    if [[ -d /var/log/zthfs ]]; then
-        rm -rf /var/log/zthfs
-        log_info "Removed /var/log/zthfs"
-    fi
-
-    if [[ -d /etc/zthfs ]]; then
-        rm -rf /etc/zthfs
-        log_info "Removed /etc/zthfs"
-    fi
-
-# Reset mount point permissions (if it exists and we're not removing data)
-if [[ -d /mnt/zthfs ]] && [[ "$PRESERVE_DATA" == "true" ]]; then
-    # Reset permissions to allow access by other users
-    chown root:root /mnt/zthfs 2>/dev/null || true
-    chmod 755 /mnt/zthfs 2>/dev/null || true
-    log_info "Reset permissions for mount point /mnt/zthfs"
-fi
-
-# Remove mount point directory (only if empty and not preserving data)
-if [[ -d /mnt/zthfs ]] && [[ ! "$(ls -A /mnt/zthfs 2>/dev/null)" ]] && [[ "$PRESERVE_DATA" == "false" ]]; then
-    rmdir /mnt/zthfs 2>/dev/null || true
-    log_info "Removed empty mount point /mnt/zthfs"
-elif [[ -d /mnt/zthfs ]] && [[ "$PRESERVE_DATA" == "false" ]]; then
-    log_warn "Mount point /mnt/zthfs is not empty, preserving it"
-fi
-fi
-
-# Remove zthfs user and group (only if they exist and are not used elsewhere)
-log_info "Checking zthfs user and group..."
-if id -u zthfs &>/dev/null; then
-    # Check if user owns any files outside of ZTHFS directories
-    if [[ "$PRESERVE_DATA" == "false" ]]; then
-        # Safe to remove user since we've removed all ZTHFS directories
-        userdel zthfs 2>/dev/null || true
-        log_info "Removed zthfs user"
-    else
-        log_warn "Preserving zthfs user as data directories were kept"
-    fi
-fi
-
-# Remove zthfs from fuse group if it exists
-if getent group fuse > /dev/null 2>&1 && id -u zthfs &>/dev/null; then
-    gpasswd -d zthfs fuse 2>/dev/null || true
-    log_info "Removed zthfs from fuse group"
-fi
-
-# Ask about removing system dependencies
-# read -p "Do you want to remove system dependencies (fuse, build tools)? (yes/no): " remove_deps
-# if [[ "$remove_deps" == "yes" ]]; then
-#     log_info "Removing system dependencies..."
-#     case $OS in
-#         debian)
-#             $PACKAGE_MANAGER remove -y curl build-essential pkg-config libfuse-dev fuse
-#             $PACKAGE_MANAGER autoremove -y
-#             ;;
-#         redhat|fedora)
-#             $PACKAGE_MANAGER remove -y curl gcc make pkgconfig fuse-libs fuse-devel
-#             ;;
-#         opensuse)
-#             $PACKAGE_MANAGER remove -y curl gcc make pkgconfig fuse fuse-devel
-#             ;;
-#     esac
-#     log_info "System dependencies removed"
-# else
-#     log_info "System dependencies preserved"
-# fi
-
-# Ask about removing Rust (only if it was installed by the deploy script)
-read -p "Do you want to remove Rust (if it was installed by ZTHFS)? (yes/no): " remove_rust
-if [[ "$remove_rust" == "yes" ]]; then
-    log_warn "Removing Rust installation..."
-    if [[ -d $HOME/.cargo ]]; then
-        rm -rf $HOME/.cargo
-        rm -rf $HOME/.rustup
-        log_info "Rust installation removed"
-    else
-        log_info "No Rust installation found in user home"
-    fi
-fi
-
-# Clean up working directory
-if [[ -d "zthfs" ]]; then
-    read -p "Do you want to remove the ZTHFS source code directory? (yes/no): " remove_source
-    if [[ "$remove_source" == "yes" ]]; then
-        rm -rf zthfs
-        log_info "ZTHFS source code directory removed"
-    fi
-fi
-
-# Final cleanup - remove any remaining ZTHFS related files
-log_info "Performing final cleanup..."
-
-# Remove any systemd overrides
-if [[ -d /etc/systemd/system/zthfs.service.d ]]; then
-    rm -rf /etc/systemd/system/zthfs.service.d
-    log_info "Removed systemd service overrides"
-fi
-
-# Remove from systemd user lingering (if applicable)
-if loginctl show-user zthfs &>/dev/null; then
-    loginctl disable-linger zthfs 2>/dev/null || true
-fi
-
-log_success "ZTHFS uninstallation completed!"
-log_info ""
-log_info "Summary of actions taken:"
-if [[ "$PRESERVE_DATA" == "false" ]]; then
-    log_info "✓ Removed all ZTHFS data and configurations"
 else
-    log_info "✓ Preserved ZTHFS data and configurations"
-fi
-log_info "✓ Stopped and disabled systemd service"
-log_info "✓ Removed ZTHFS binary"
-log_info "✓ Cleaned up system integration"
-
-if [[ "$remove_deps" == "yes" ]]; then
-    log_info "✓ Removed system dependencies"
+    log_info "Preserving data directory: /var/lib/zthfs"
+    PRESERVED_ITEMS+=("Data directory: /var/lib/zthfs")
 fi
 
-if [[ "$remove_rust" == "yes" ]]; then
-    log_info "✓ Removed Rust installation"
+# ============================================================================
+# Step 6: Handle configuration
+# ============================================================================
+log_info "Step 6/7: Handling configuration..."
+
+echo ""
+echo -ne "Remove configuration file ($CONFIG_FILE)? "
+echo -ne "${YELLOW}This contains your encryption keys!${NC}"
+echo -n " (yes/no): "
+read -r
+if [[ "$REPLY" =~ ^[Yy][Ee][Ss]$ ]]; then
+    if [[ -d "/etc/zthfs" ]]; then
+        rm -rf /etc/zthfs
+        log_success "Configuration removed"
+    fi
+else
+    log_info "Preserving configuration: $CONFIG_FILE"
+    PRESERVED_ITEMS+=("Configuration: $CONFIG_FILE")
+
+    # Create a backup with timestamp
+    if [[ -f "$CONFIG_FILE" ]]; then
+        BACKUP_CONFIG="${CONFIG_FILE}.uninstalled_$(date +%Y%m%d_%H%M%S)"
+        cp "$CONFIG_FILE" "$BACKUP_CONFIG"
+        log_success "Configuration backed up to: $BACKUP_CONFIG"
+    fi
 fi
 
-log_info ""
-log_warn "Please restart your system to ensure all changes take effect."
-log_info "If you encounter any issues, please check the system logs with: journalctl -u zthfs"
+# ============================================================================
+# Step 7: Clean up remaining items
+# ============================================================================
+log_info "Step 7/7: Cleaning up remaining items..."
+
+# Remove log directory
+if [[ -d "/var/log/zthfs" ]]; then
+    echo ""
+    echo -n "Remove log directory (/var/log/zthfs)? (yes/no): "
+    read -r
+    if [[ "$REPLY" =~ ^[Yy][Ee][Ss]$ ]]; then
+        rm -rf /var/log/zthfs
+        log_success "Log directory removed"
+    else
+        PRESERVED_ITEMS+=("Log directory: /var/log/zthfs")
+    fi
+fi
+
+# Remove system user
+echo ""
+echo -n "Remove zthfs system user? (yes/no): "
+read -r
+if [[ "$REPLY" =~ ^[Yy][Ee][Ss]$ ]]; then
+    if id -u zthfs &>/dev/null; then
+        userdel zthfs 2>/dev/null || true
+        log_success "System user removed"
+    else
+        log_info "System user does not exist"
+    fi
+else
+    PRESERVED_ITEMS+=("System user: zthfs")
+fi
+
+# Remove mount point (only if empty)
+if [[ -d "$MOUNT_POINT" ]]; then
+    # Check if directory is empty (only lost+found or nothing)
+    CONTENTS=$(ls -A "$MOUNT_POINT" 2>/dev/null)
+    if [[ -z "$CONTENTS" ]] || [[ "$CONTENTS" == "lost+found" ]]; then
+        echo ""
+        echo -n "Remove empty mount point ($MOUNT_POINT)? (yes/no): "
+        read -r
+        if [[ "$REPLY" =~ ^[Yy][Ee][Ss]$ ]]; then
+            rmdir "$MOUNT_POINT" 2>/dev/null || rm -rf "$MOUNT_POINT" 2>/dev/null || true
+            log_success "Mount point removed"
+        else
+            PRESERVED_ITEMS+=("Mount point: $MOUNT_POINT")
+        fi
+    else
+        log_info "Mount point not empty - preserving"
+        PRESERVED_ITEMS+=("Mount point: $MOUNT_POINT (contains data)")
+    fi
+fi
+
+# Remove from fuse group
+if getent group fuse > /dev/null 2>&1; then
+    if getent group fuse | grep -q "\bzthfs\b"; then
+        gpasswd -d zthfs fuse 2>/dev/null || true
+        log_info "Removed zthfs from fuse group"
+    fi
+fi
+
+# ============================================================================
+# Summary
+# ============================================================================
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+log_success "ZTHFS uninstallation completed!"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+if [[ ${#PRESERVED_ITEMS[@]} -gt 0 ]]; then
+    echo -e "${YELLOW}Preserved items:${NC}"
+    for item in "${PRESERVED_ITEMS[@]}"; do
+        echo "  • $item"
+    done
+    echo ""
+fi
+
+echo -e "${BLUE}To completely remove all remaining items:${NC}"
+echo "  sudo rm -rf /var/lib/zthfs /etc/zthfs /var/log/zthfs '$MOUNT_POINT'"
+echo "  sudo userdel zthfs"
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

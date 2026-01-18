@@ -16,15 +16,16 @@ pub fn create_file(fs: &Zthfs, path: &Path, mode: u32) -> ZthfsResult<FileAttr> 
         fs::create_dir_all(parent)?;
     }
 
-    // Create file
-    let _file = fs::File::create(&real_path)?;
+    // Create and set permissions in one block to ensure file is closed before get_attr
+    {
+        let file = fs::File::create(&real_path)?;
+        let mut perms = file.metadata()?.permissions();
+        perms.set_mode(mode);
+        file.set_permissions(perms)?;
+        file.sync_all()?;
+    } // file is closed here
 
-    // Set file permissions
-    let mut perms = fs::metadata(&real_path)?.permissions();
-    perms.set_mode(mode);
-    fs::set_permissions(&real_path, perms)?;
-
-    // Get file attributes
+    // Now get attributes - file is closed and synced
     let attr = attr_ops::get_attr(fs, path)?;
     Ok(attr)
 }

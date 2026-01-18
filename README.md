@@ -1,8 +1,13 @@
 # ZTHFS - Zero-Trust Healthcare Filesystem
 
+[中文README](README_zh.md) | English
+
+> **NOTICE: This is a proof-of-concept (PoC) project.** While the cryptographic core and FUSE operations are implemented and tested, certain features have simplified implementations that may not be suitable for production use without further hardening.
+
 [![License](https://img.shields.io/badge/license-BSD3--Clause-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70+-blue.svg)](https://www.rust-lang.org)
 [![Coverage](https://img.shields.io/badge/coverage-64.89%25-green.svg)](coverage/tarpaulin-report.html)
+[![Status](https://img.shields.io/badge/status-POC-yellow.svg)](https://github.com/somhairle/zthfs)
 
 ## Abstract
 
@@ -406,6 +411,17 @@ The system mitigates the following threats:
 1. **Metadata leakage**: File sizes, access patterns, and directory structure remain visible
 2. **Single point of failure**: Loss of the master key renders data permanently inaccessible
 3. **Performance overhead**: Encryption/integrity operations add latency to all I/O
+4. **Simplified permission checking**: The `access()` FUSE operation currently validates only whether a user is in the configured allowlist (`allowed_users`/`allowed_groups`). It does **not** enforce per-file permissions—authorized users have full read/write/execute access to all files. The `_mask` parameter (R_OK/W_OK/X_OK) is accepted but not evaluated against individual file permissions. This is sufficient for a trusted-user environment but inadequate for multi-tenant scenarios requiring file-level access control.
+5. **Passive flush handler**: The `flush()` operation is a stub that returns success without performing any synchronization. Data integrity is maintained through explicit `sync_all()` calls during file creation, but the flush callback provides no additional guarantees. In production, this should sync pending writes and handle dirty buffers.
+
+**TODO for Production Readiness:**
+
+| Component | Current Behavior | Required for Production |
+|-----------|------------------|-------------------------|
+| `access()` | Allowlist check only; ignores `_mask` | Per-file permission validation |
+| `flush()` | No-op stub | Explicit data sync, buffer flush |
+| Permission model | All-or-nothing per user | Unix-like rwx per file |
+| Audit logging | Basic logging present | Structured, tamper-evident audit |
 
 ## References
 

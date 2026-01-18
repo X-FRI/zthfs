@@ -28,6 +28,9 @@ pub fn read_dir(
             let file_name_str = file_name.to_string_lossy();
             if file_name_str.ends_with(metadata_ops::METADATA_SUFFIX)
                 || file_name_str.ends_with(metadata_ops::DIR_MARKER_SUFFIX)
+                // Filter out internal database directories
+                || file_name_str == "inode_db"
+                || file_name_str == ".zthfs_internal"
             {
                 continue;
             }

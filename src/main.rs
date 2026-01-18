@@ -147,19 +147,27 @@ fn mount_filesystem(
     // Create filesystem instance
     let fs = Zthfs::new(&config)?;
 
-    // Mount with FUSE - this will block until the filesystem is unmounted
+    // Mount with FUSE using Session to bypass fusermount3
+    // This is required for Linux 6.18+ which doesn't support old-style mounting
     info!("Starting FUSE mount at {mount_point}");
-    fuser::mount2(
-        fs,
-        mount_point,
-        &[
-            fuser::MountOption::FSName("zthfs".to_string()),
-            fuser::MountOption::Subtype("zthfs".to_string()),
-            fuser::MountOption::AllowOther,
-            fuser::MountOption::AutoUnmount,
-            fuser::MountOption::DefaultPermissions,
-        ],
-    )?;
+
+    // Create mount options
+    // Note: NOT using DefaultPermissions so that ZTHFS's own permission
+    // checking (via allowed_users/allowed_groups in config) takes effect.
+    let mount_options = vec![
+        fuser::MountOption::FSName("zthfs".to_string()),
+        fuser::MountOption::Subtype("zthfs".to_string()),
+        fuser::MountOption::AllowOther,
+        fuser::MountOption::NoAtime,
+        fuser::MountOption::RW,
+        fuser::MountOption::Exec,
+    ];
+
+    // Session::new() creates the session, then run() starts the event loop
+    // and blocks until unmounted. This is required for Linux 6.18+ which
+    // doesn't support old-style mounting.
+    let mut session = fuser::Session::new(fs, mount_point, &mount_options)?;
+    session.run()?;
 
     info!("Filesystem unmounted successfully from {mount_point}");
     Ok(())

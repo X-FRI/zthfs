@@ -190,8 +190,10 @@ impl Zthfs {
             Ok(inode)
         } else {
             // Path doesn't exist, generate a new unique inode atomically
-            // Add 1 to ensure inode starts from 1 (FUSE requirement)
-            let inode = self.inode_db.generate_id()? + 1;
+            // We add 2 to skip inode 1 (reserved for root directory)
+            // sled's generate_id() starts at 0, so first file gets 0+2=2
+            let raw_id = self.inode_db.generate_id()?;
+            let inode = raw_id.saturating_add(2);  // Start from 2, skip root (1)
             let inode_bytes = inode.to_be_bytes();
             let inode_key = IVec::from(&inode_bytes[..]); // inode as key for reverse mapping
 
@@ -339,6 +341,23 @@ impl Filesystem for Zthfs {
                 reply.error(libc::ENOENT);
             }
         }
+    }
+
+    /// Check file access permissions.
+    /// Called when DefaultPermissions is not set.
+    fn access(&mut self, _req: &Request, _ino: u64, _mask: i32, reply: ReplyEmpty) {
+        let uid = _req.uid();
+        let gid = _req.gid();
+
+        // Check if user is allowed to access this filesystem
+        if !self.check_permission(uid, gid) {
+            reply.error(libc::EACCES);
+            return;
+        }
+
+        // For now, allow all access for authorized users
+        // TODO: Implement proper permission checking based on file attributes
+        reply.ok();
     }
 
     /// Get the attributes of the specified inode (file or directory).
@@ -704,14 +723,15 @@ impl Filesystem for Zthfs {
 
         match file_create::create_file(self, &path, mode) {
             Ok(attr) => {
-                self.logger
-                    .log_access("create", &path.to_string_lossy(), uid, gid, "success", None)
-                    .unwrap_or(());
+                // Log the successful file creation
+                log::info!("File created successfully: {:?}, inode: {}", path, attr.ino);
 
                 reply.created(&TTL, &attr, 0, 0, 0);
             }
             Err(e) => {
                 let error_msg = format!("{e}");
+                log::error!("Failed to create file {:?}: {}", path, error_msg);
+
                 self.logger
                     .log_error(
                         "create",
@@ -1189,6 +1209,21 @@ impl Filesystem for Zthfs {
             .log_access("open", &path.to_string_lossy(), uid, gid, "success", None)
             .unwrap_or(());
         reply.opened(0, fuser::consts::FOPEN_KEEP_CACHE);
+    }
+
+    /// Flush pending changes. Called when a file is closed or explicitly flushed.
+    /// This is important for proper file handle cleanup after create().
+    fn flush(
+        &mut self,
+        _req: &Request,
+        _ino: u64,
+        _fh: u64,
+        _lock_owner: u64,
+        reply: ReplyEmpty,
+    ) {
+        // For now, just acknowledge the flush.
+        // In the future, this could sync data to disk.
+        reply.ok();
     }
 
     fn release(

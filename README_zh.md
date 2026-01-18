@@ -1,8 +1,13 @@
 # ZTHFS - 零信任医疗文件系统
 
+中文 | [English](README.md)
+
 [![License](https://img.shields.io/badge/license-BSD3--Clause-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70+-blue.svg)](https://www.rust-lang.org)
 [![Coverage](https://img.shields.io/badge/coverage-64.89%25-green.svg)](coverage/tarpaulin-report.html)
+[![Status](https://img.shields.io/badge/status-POC-yellow.svg)](https://github.com/somhairle/zthfs)
+
+> **注意：这是一个概念验证（PoC）项目。**虽然密码学核心和 FUSE 操作已实现并经过测试，但某些功能采用了简化实现，可能不直接适用于生产环境，需要进一步加固。
 
 ## 摘要
 
@@ -406,6 +411,17 @@ cargo clippy --all-targets
 1. **元数据泄漏**：文件大小、访问模式和目录结构仍然可见
 2. **单点故障**：主密钥丢失将导致数据永久无法访问
 3. **性能开销**：加密/完整性操作为所有 I/O 增加延迟
+4. **简化的权限检查**：`access()` FUSE 操作目前仅验证用户是否在配置的白名单（`allowed_users`/`allowed_groups`）中。它**不**强制执行单文件权限——授权用户对所有文件拥有完全的读/写/执行权限。`_mask` 参数（R_OK/W_OK/X_OK）被接受但不会根据单个文件权限进行评估。这对于可信用户环境是足够的，但对于需要文件级访问控制的多租户场景是不够的。
+5. **被动的 flush 处理器**：`flush()` 操作是一个存根，不执行任何同步操作就直接返回成功。数据完整性通过文件创建期间的显式 `sync_all()` 调用来维护，但 flush 回调不提供额外保证。在生产环境中，这应该同步待处理的写入并处理脏缓冲区。
+
+**生产就绪待办事项：**
+
+| 组件 | 当前行为 | 生产环境所需 |
+|-----|----------|-------------|
+| `access()` | 仅检查白名单；忽略 `_mask` | 单文件权限验证 |
+| `flush()` | 空操作存根 | 显式数据同步、缓冲区刷新 |
+| 权限模型 | 每用户全有或全无 | Unix 风格的每文件 rwx |
+| 审计日志 | 基本日志存在 | 结构化、防篡改审计 |
 
 ## 参考文献
 
