@@ -41,6 +41,9 @@ pub mod path_utils;
 pub mod security;
 pub mod utils;
 
+#[cfg(test)]
+mod tests;
+
 const TTL: Duration = Duration::from_secs(1);
 
 pub struct Zthfs {
