@@ -158,14 +158,11 @@ fn test_concurrent_read_write_same_file() {
         let handle = thread::spawn(move || {
             barrier.wait();
 
-            match OpenOptions::new().write(true).append(true).open(&file_path) {
-                Ok(mut file) => {
-                    let data = format!(" Writer {}", writer_id);
-                    if file.write_all(data.as_bytes()).is_ok() {
-                        write_count.fetch_add(1, Ordering::Relaxed);
-                    }
+            if let Ok(mut file) = OpenOptions::new().append(true).open(&file_path) {
+                let data = format!(" Writer {}", writer_id);
+                if file.write_all(data.as_bytes()).is_ok() {
+                    write_count.fetch_add(1, Ordering::Relaxed);
                 }
-                Err(_) => {}
             }
         });
 

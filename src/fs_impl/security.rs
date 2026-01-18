@@ -542,6 +542,7 @@ mod tests {
         SecurityValidator::with_legacy_root(config) // Use legacy mode for test compatibility
     }
 
+    #[allow(dead_code)]
     fn create_zero_trust_test_validator() -> SecurityValidator {
         let config = SecurityConfig {
             allowed_users: vec![1000, 0],
@@ -1007,7 +1008,7 @@ mod tests {
             access_control_level: "strict".to_string(),
         };
         let validator = SecurityValidator::with_zero_trust_root(config);
-        assert_eq!(validator.is_root_bypass_enabled(), false);
+        assert!(!validator.is_root_bypass_enabled());
 
         // File with no permissions (0o000) - root should be denied in zero-trust mode
         // even though root is in allowed_users
@@ -1035,7 +1036,7 @@ mod tests {
             access_control_level: "strict".to_string(),
         };
         let validator = SecurityValidator::with_legacy_root(config);
-        assert_eq!(validator.is_root_bypass_enabled(), true);
+        assert!(validator.is_root_bypass_enabled());
 
         // In legacy mode, root bypasses all file permissions
         assert!(validator.check_file_permission_legacy(0, 0, 1000, 1000, 0o000, FileAccess::Read));

@@ -268,7 +268,7 @@ mod integration_tests {
     fn test_module_reexports() {
         // Test that key types are re-exported
         // This is a compile-time check that the re-exports work
-        let _ = ZthfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, "test"));
+        let _ = ZthfsError::Io(std::io::Error::other("test"));
         let _: ZthfsResult<()> = Ok(());
 
         // Test that config types are available

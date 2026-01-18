@@ -58,6 +58,22 @@ pub struct TestFs {
 impl TestFs {
     /// Creates a new test filesystem with temporary directories
     pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the mount directory path
+    pub fn mount_path(&self) -> &Path {
+        self.mount_dir.path()
+    }
+
+    /// Returns the data directory path
+    pub fn data_path(&self) -> &Path {
+        self.data_dir.path()
+    }
+}
+
+impl Default for TestFs {
+    fn default() -> Self {
         let data_dir = TempDir::new().unwrap();
         let mount_dir = TempDir::new().unwrap();
 
@@ -80,16 +96,6 @@ impl TestFs {
             data_dir,
             fs,
         }
-    }
-
-    /// Returns the mount directory path
-    pub fn mount_path(&self) -> &Path {
-        self.mount_dir.path()
-    }
-
-    /// Returns the data directory path
-    pub fn data_path(&self) -> &Path {
-        self.data_dir.path()
     }
 }
 

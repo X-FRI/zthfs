@@ -224,8 +224,9 @@ impl EncryptionHandler {
     /// Internal method to generate nonce with specified mode.
     fn generate_nonce_with_mode(&self, path: &str, for_encrypt: bool) -> ZthfsResult<GenericArray<u8, U12>> {
         // If using counter-based nonces, use counter in hash
-        if self.use_counter_nonces {
-            if let Some(manager) = &self.nonce_manager {
+        if self.use_counter_nonces
+            && let Some(manager) = &self.nonce_manager
+        {
                 // For encryption: get current counter, then increment
                 // For decryption: just get current counter (don't increment)
                 let counter = if for_encrypt {
@@ -265,7 +266,6 @@ impl EncryptionHandler {
                 // Cache with counter-specific key
                 self.nonce_cache.insert(cache_key, nonce);
                 return Ok(nonce);
-            }
         }
 
         // Legacy mode: deterministic nonce (VULNERABLE to reuse on modification)

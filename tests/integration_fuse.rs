@@ -122,7 +122,6 @@ fn test_fuse_open_append() {
     // Open with append mode
     {
         let mut file = OpenOptions::new()
-            .write(true)
             .append(true)
             .open(&file_path)
             .expect("Failed to open file for append");

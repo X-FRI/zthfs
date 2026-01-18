@@ -207,6 +207,7 @@ fn test_file_append() {
         let mut file = OpenOptions::new()
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&file_path)
             .expect("Failed to create file");
         file.write_all(b"Initial ")
@@ -216,7 +217,6 @@ fn test_file_append() {
     // Append data
     {
         let mut file = OpenOptions::new()
-            .write(true)
             .append(true)
             .open(&file_path)
             .expect("Failed to open for appending");
@@ -242,6 +242,7 @@ fn test_file_seek_and_write() {
         let mut file = OpenOptions::new()
             .write(true)
             .create(true)
+            .truncate(true)
             .open(&file_path)
             .expect("Failed to create file");
 

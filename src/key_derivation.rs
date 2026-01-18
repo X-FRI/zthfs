@@ -103,16 +103,16 @@ impl KeyDerivationConfig {
     /// Save the config to a file.
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> ZthfsResult<()> {
         let json = serde_json::to_string_pretty(self)
-            .map_err(|e| ZthfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| ZthfsError::Io(std::io::Error::other(e)))?;
         std::fs::write(path, json)
-            .map_err(|e| ZthfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| ZthfsError::Io(std::io::Error::other(e)))?;
         Ok(())
     }
 
     /// Load the config from a file.
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> ZthfsResult<Self> {
         let json = std::fs::read_to_string(path)
-            .map_err(|e| ZthfsError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| ZthfsError::Io(std::io::Error::other(e)))?;
         serde_json::from_str(&json)
             .map_err(|e| ZthfsError::Config(format!("Failed to parse key derivation config: {e}")))
     }

@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn test_from_box_error() {
-        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "boxed error");
+        let io_err = std::io::Error::other("boxed error");
         let boxed_err: Box<dyn std::error::Error + Send + Sync> = io_err.into();
         let zthfs_err: ZthfsError = boxed_err.into();
         assert!(matches!(zthfs_err, ZthfsError::Fs(_)));
@@ -370,7 +370,7 @@ mod tests {
     #[test]
     fn test_zthfs_result_ok() {
         let result: ZthfsResult<i32> = Ok(42);
-        assert_eq!(result.unwrap(), 42);
+        assert_eq!(result, Ok(42));
     }
 
     #[test]

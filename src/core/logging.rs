@@ -736,7 +736,7 @@ mod tests {
             ..Default::default()
         };
         let handler = LogHandler::new(&config).unwrap();
-        assert_eq!(handler.config().enabled, true);
+        assert!(handler.config().enabled);
         assert_eq!(handler.config().level, "debug");
 
         handler.flush_all().unwrap();

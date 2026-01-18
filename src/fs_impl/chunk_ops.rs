@@ -308,14 +308,6 @@ mod tests {
 
         // Verify new metadata fields exist
         assert!(metadata.mode > 0, "Metadata should have mode");
-        assert!(
-            metadata.uid > 0 || metadata.uid == 0,
-            "Metadata should have uid"
-        );
-        assert!(
-            metadata.gid > 0 || metadata.gid == 0,
-            "Metadata should have gid"
-        );
         assert!(metadata.atime > 0, "Metadata should have atime");
         assert!(metadata.ctime > 0, "Metadata should have ctime");
         assert!(!metadata.is_dir, "File should not be marked as directory");

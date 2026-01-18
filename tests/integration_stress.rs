@@ -381,7 +381,6 @@ fn test_append_stress() {
     // Perform many append operations
     for _ in 0..num_appends {
         let mut file = OpenOptions::new()
-            .write(true)
             .append(true)
             .open(&file_path)
             .expect("Failed to open for append");
@@ -439,7 +438,7 @@ fn test_mixed_operations_stress() {
     // Perform a mix of different operations
     let operations = 200;
 
-    for i in 0..operations {
+    for i in 0i32..operations {
         match i % 5 {
             0 => {
                 // Create file
@@ -465,7 +464,7 @@ fn test_mixed_operations_stress() {
             4 => {
                 // Try to delete (may fail if doesn't exist)
                 let file_path =
-                    mount_path.join(format!("mix_{}.txt", (i as i32).saturating_sub(10)));
+                    mount_path.join(format!("mix_{}.txt", i.saturating_sub(10)));
                 let _ = fs::remove_file(&file_path);
             }
             _ => unreachable!(),
