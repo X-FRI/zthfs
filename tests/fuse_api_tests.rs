@@ -652,3 +652,204 @@ fn test_readdir_nonexistent_directory() {
     // Should fail - directory doesn't exist
     assert!(result.is_err(), "readdir should fail");
 }
+
+// ============================================================================
+// Mkdir Tests
+// ============================================================================
+
+/// Simulate mkdir by using Zthfs's internal directory creation
+fn simulate_mkdir(fs: &mut Zthfs, req: &TestRequest, parent: u64, name: &OsStr) -> Result<(), i32> {
+    let uid = req.uid;
+    let gid = req.gid;
+
+    // Get the parent path from inode
+    let parent_path = match fs.get_path_for_inode(parent) {
+        Some(path) => path,
+        None => return Err(libc::ENOENT),
+    };
+
+    // Build the full path
+    let path = parent_path.join(name);
+
+    // Strip leading "/" for actual filesystem path
+    let relative_path = path.to_string_lossy();
+    let relative_path_str = relative_path.as_ref();
+    let fs_path = if relative_path_str.starts_with('/') {
+        fs.data_dir().join(&relative_path_str[1..])
+    } else {
+        fs.data_dir().join(relative_path_str)
+    };
+
+    // Check permission
+    if !fs.check_permission(uid, gid) {
+        return Err(libc::EACCES);
+    }
+
+    // Create the directory
+    match std::fs::create_dir(&fs_path) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(libc::EIO),
+    }
+}
+
+#[test]
+fn test_mkdir_new_directory() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    let req = TestRequest::unprivileged();
+
+    let result = simulate_mkdir(&mut fs, &req, ROOT_INODE, OsStr::new("newdir"));
+
+    assert!(result.is_ok(), "mkdir should succeed");
+
+    // Verify directory was created
+    let dir_path = fs.data_dir().join("newdir");
+    assert!(dir_path.exists(), "directory should exist");
+}
+
+#[test]
+fn test_mkdir_unauthorized() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    let req = TestRequest::new(99999, 99999);
+
+    let result = simulate_mkdir(&mut fs, &req, ROOT_INODE, OsStr::new("denied_dir"));
+
+    assert!(result.is_err(), "unauthorized user should be denied");
+}
+
+// ============================================================================
+// Unlink Tests
+// ============================================================================
+
+/// Simulate unlink by using Zthfs's internal file deletion
+fn simulate_unlink(fs: &mut Zthfs, req: &TestRequest, parent: u64, name: &OsStr) -> Result<(), i32> {
+    let uid = req.uid;
+    let gid = req.gid;
+
+    // Get the parent path from inode
+    let parent_path = match fs.get_path_for_inode(parent) {
+        Some(path) => path,
+        None => return Err(libc::ENOENT),
+    };
+
+    // Build the full path
+    let path = parent_path.join(name);
+
+    // Strip leading "/" for actual filesystem path
+    let relative_path = path.to_string_lossy();
+    let relative_path_str = relative_path.as_ref();
+    let fs_path = if relative_path_str.starts_with('/') {
+        fs.data_dir().join(&relative_path_str[1..])
+    } else {
+        fs.data_dir().join(relative_path_str)
+    };
+
+    // Check permission
+    if !fs.check_permission(uid, gid) {
+        return Err(libc::EACCES);
+    }
+
+    // Delete the file
+    match std::fs::remove_file(&fs_path) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(libc::ENOENT),
+    }
+}
+
+#[test]
+fn test_unlink_existing_file() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    create_test_file(&fs, "to_delete.txt", b"delete me");
+
+    let req = TestRequest::unprivileged();
+
+    let result = simulate_unlink(&mut fs, &req, ROOT_INODE, OsStr::new("to_delete.txt"));
+
+    assert!(result.is_ok(), "unlink should succeed");
+
+    // Verify file was deleted
+    let file_path = fs.data_dir().join("to_delete.txt");
+    assert!(!file_path.exists(), "file should be deleted");
+}
+
+#[test]
+fn test_unlink_nonexistent_file() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    let req = TestRequest::unprivileged();
+
+    let result = simulate_unlink(&mut fs, &req, ROOT_INODE, OsStr::new("doesnotexist.txt"));
+
+    // Should fail with ENOENT
+    assert!(result.is_err(), "unlink should fail for nonexistent file");
+}
+
+// ============================================================================
+// Rmdir Tests
+// ============================================================================
+
+/// Simulate rmdir by using Zthfs's internal directory deletion
+fn simulate_rmdir(fs: &mut Zthfs, req: &TestRequest, parent: u64, name: &OsStr) -> Result<(), i32> {
+    let uid = req.uid;
+    let gid = req.gid;
+
+    // Get the parent path from inode
+    let parent_path = match fs.get_path_for_inode(parent) {
+        Some(path) => path,
+        None => return Err(libc::ENOENT),
+    };
+
+    // Build the full path
+    let path = parent_path.join(name);
+
+    // Strip leading "/" for actual filesystem path
+    let relative_path = path.to_string_lossy();
+    let relative_path_str = relative_path.as_ref();
+    let fs_path = if relative_path_str.starts_with('/') {
+        fs.data_dir().join(&relative_path_str[1..])
+    } else {
+        fs.data_dir().join(relative_path_str)
+    };
+
+    // Check permission
+    if !fs.check_permission(uid, gid) {
+        return Err(libc::EACCES);
+    }
+
+    // Delete the directory
+    match std::fs::remove_dir(&fs_path) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(libc::ENOENT),
+    }
+}
+
+#[test]
+fn test_rmdir_existing_directory() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    create_test_dir(&fs, "to_remove");
+
+    let req = TestRequest::unprivileged();
+
+    let result = simulate_rmdir(&mut fs, &req, ROOT_INODE, OsStr::new("to_remove"));
+
+    assert!(result.is_ok(), "rmdir should succeed");
+
+    // Verify directory was deleted
+    let dir_path = fs.data_dir().join("to_remove");
+    assert!(!dir_path.exists(), "directory should be removed");
+}
+
+#[test]
+fn test_rmdir_nonexistent_directory() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    let req = TestRequest::unprivileged();
+
+    let result = simulate_rmdir(&mut fs, &req, ROOT_INODE, OsStr::new("doesnotexist"));
+
+    // Should fail
+    assert!(result.is_err(), "rmdir should fail for nonexistent directory");
+}
