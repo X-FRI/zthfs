@@ -3,6 +3,10 @@
 //! Provides mock structures and helpers for testing FUSE callbacks
 //! without needing actual FUSE mounting.
 
+use crate::config::{FilesystemConfig, FilesystemConfigBuilder, LogConfig};
+use crate::fs_impl::Zthfs;
+use tempfile::TempDir;
+
 /// Mock request with configurable uid/gid
 ///
 /// Note: This is a simplified mock for testing. Creating actual fuser::Request
@@ -78,4 +82,42 @@ impl<T> TestReply<T> {
     pub fn failed(&self) -> bool {
         self.called && self.error.is_some()
     }
+}
+
+/// Creates a test filesystem configuration with disabled logging and permissive security
+pub fn create_test_config(data_dir: &std::path::Path) -> FilesystemConfig {
+    // Get current user's uid/gid for test configuration
+    let current_uid = unsafe { libc::getuid() };
+    let current_gid = unsafe { libc::getgid() };
+
+    // Build base config
+    let mut config = FilesystemConfigBuilder::new()
+        .data_dir(data_dir.to_string_lossy().to_string())
+        .logging(LogConfig {
+            enabled: false,
+            file_path: String::new(),
+            level: "warn".to_string(),
+            max_size: 0,
+            rotation_count: 0,
+        })
+        .build()
+        .unwrap();
+
+    // For tests, allow the current user and root to access the filesystem
+    // This allows tests to run without root privileges
+    config.security.allowed_users = vec![current_uid, 0];
+    config.security.allowed_groups = vec![current_gid, 0];
+
+    config
+}
+
+/// Creates a temporary test filesystem without mounting
+///
+/// Returns a tuple of (temp_dir, filesystem) where the temp_dir
+/// will be automatically cleaned up when dropped.
+pub fn create_test_fs() -> (TempDir, Zthfs) {
+    let temp_dir = TempDir::new().unwrap();
+    let config = create_test_config(temp_dir.path());
+    let fs = Zthfs::new(&config).unwrap();
+    (temp_dir, fs)
 }
