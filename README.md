@@ -375,9 +375,14 @@ cache_size = 256
 
 ## Testing
 
+For comprehensive testing documentation, see [TESTING.md](docs/TESTING.md).
+
 ```bash
 # Unit tests
 cargo test --lib
+
+# Integration tests
+cargo test --workspace
 
 # Property-based tests (256 cases per property)
 cargo test --lib property_tests
@@ -390,6 +395,16 @@ cargo clippy --all-targets
 ```
 
 Current test coverage: **64.89%** (1571/2421 lines)
+
+### Test Categories
+
+- **Unit tests**: Fast, isolated tests for individual functions and modules
+- **Integration tests**: Full FUSE filesystem tests with real I/O operations
+- **Property-based tests**: Hypothesis-based tests that verify invariants across random inputs
+- **Stress tests**: Performance and reliability tests with large files and many operations
+- **Concurrent access tests**: Thread-safety verification for parallel operations
+
+See [TESTING.md](docs/TESTING.md) for detailed documentation on running and writing tests.
 
 ## Security Considerations
 
