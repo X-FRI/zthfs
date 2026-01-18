@@ -38,6 +38,10 @@ impl CaptureReplyCreate {
         self.error.is_none()
     }
 
+    pub fn is_error(&self) -> bool {
+        self.error.is_some()
+    }
+
     pub fn get_attr(&self) -> Option<&FileAttr> {
         self.attr.as_ref()
     }

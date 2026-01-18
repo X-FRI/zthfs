@@ -26,6 +26,10 @@ impl CaptureReplyOpen {
         self.error.is_none()
     }
 
+    pub fn is_error(&self) -> bool {
+        self.error.is_some()
+    }
+
     pub fn get_flags(&self) -> Option<u64> {
         self.flags
     }
