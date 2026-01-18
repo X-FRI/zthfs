@@ -227,25 +227,6 @@ jobs:
       run: |
         cargo install --git https://github.com/flamegraph-rs/flamegraph
 
-    - name: Run performance benchmarks
-      run: |
-        echo "Running encryption benchmarks..."
-        cargo bench --bench crypto_benchmarks -- --nocapture | tee crypto-benchmark-results.txt
-
-        echo "Running integrity verification benchmarks..."
-        cargo bench --bench integrity_benchmarks -- --nocapture | tee integrity-benchmark-results.txt
-
-        echo "Running filesystem operations benchmarks..."
-        cargo bench --bench filesystem_benchmarks -- --nocapture | tee filesystem-benchmark-results.txt
-
-        echo "Combining all benchmark results..."
-        echo "=== CRYPTO BENCHMARKS ===" > benchmark-results.txt
-        cat crypto-benchmark-results.txt >> benchmark-results.txt
-        echo -e "\n=== INTEGRITY BENCHMARKS ===" >> benchmark-results.txt
-        cat integrity-benchmark-results.txt >> benchmark-results.txt
-        echo -e "\n=== FILESYSTEM BENCHMARKS ===" >> benchmark-results.txt
-        cat filesystem-benchmark-results.txt >> benchmark-results.txt
-
     - name: Install system performance tools
       run: |
         sudo apt-get update
@@ -299,25 +280,33 @@ jobs:
 
           # Collect perf data for different benchmark suites with error handling
           echo "Collecting perf data for crypto benchmarks..."
-          if ! $PERF_CMD record --call-graph=dwarf cargo bench --bench crypto_benchmarks -- --nocapture 2>/dev/null; then
+          if ! $PERF_CMD record --call-graph=dwarf cargo bench --bench crypto_benchmarks -- --nocapture 2> >(tee crypto-benchmark-results.txt >/dev/null); then
             echo "Perf recording failed for crypto benchmarks"
           fi
           $PERF_CMD script > crypto-perf.script 2>/dev/null || echo "Failed to generate crypto perf script"
           $PERF_CMD report --stdio > crypto-perf-report.txt 2>/dev/null || echo "Failed to generate crypto perf report"
 
           echo "Collecting perf data for integrity benchmarks..."
-          if ! $PERF_CMD record --call-graph=dwarf cargo bench --bench integrity_benchmarks -- --nocapture 2>/dev/null; then
+          if ! $PERF_CMD record --call-graph=dwarf cargo bench --bench integrity_benchmarks -- --nocapture 2> >(tee integrity-benchmark-results.txt >/dev/null); then
             echo "Perf recording failed for integrity benchmarks"
           fi
           $PERF_CMD script > integrity-perf.script 2>/dev/null || echo "Failed to generate integrity perf script"
           $PERF_CMD report --stdio > integrity-perf-report.txt 2>/dev/null || echo "Failed to generate integrity perf report"
 
           echo "Collecting perf data for filesystem benchmarks..."
-          if ! $PERF_CMD record --call-graph=dwarf cargo bench --bench filesystem_benchmarks -- --nocapture 2>/dev/null; then
+          if ! $PERF_CMD record --call-graph=dwarf cargo bench --bench filesystem_benchmarks -- --nocapture 2> >(tee filesystem-benchmark-results.txt >/dev/null); then
             echo "Perf recording failed for filesystem benchmarks"
           fi
           $PERF_CMD script > filesystem-perf.script 2>/dev/null || echo "Failed to generate filesystem perf script"
           $PERF_CMD report --stdio > filesystem-perf-report.txt 2>/dev/null || echo "Failed to generate filesystem perf report"
+
+          echo "Combining all benchmark results..."
+          echo "=== CRYPTO BENCHMARKS ===" > benchmark-results.txt
+          cat crypto-benchmark-results.txt >> benchmark-results.txt
+          echo -e "\n=== INTEGRITY BENCHMARKS ===" >> benchmark-results.txt
+          cat integrity-benchmark-results.txt >> benchmark-results.txt
+          echo -e "\n=== FILESYSTEM BENCHMARKS ===" >> benchmark-results.txt
+          cat filesystem-benchmark-results.txt >> benchmark-results.txt
 
           # Generate summary report
           echo "Performance analysis completed with some issues"
@@ -359,6 +348,14 @@ jobs:
 
           echo "Running filesystem benchmarks without perf..."
           cargo bench --bench filesystem_benchmarks -- --nocapture | tee filesystem-benchmark-results.txt || echo "Filesystem benchmarks failed"
+
+          echo "Combining all benchmark results..."
+          echo "=== CRYPTO BENCHMARKS ===" > benchmark-results.txt
+          cat crypto-benchmark-results.txt >> benchmark-results.txt
+          echo -e "\n=== INTEGRITY BENCHMARKS ===" >> benchmark-results.txt
+          cat integrity-benchmark-results.txt >> benchmark-results.txt
+          echo -e "\n=== FILESYSTEM BENCHMARKS ===" >> benchmark-results.txt
+          cat filesystem-benchmark-results.txt >> benchmark-results.txt
 
           echo "Creating placeholder files..."
           echo "Flamegraph generation skipped - perf not available" > flamegraph.svg

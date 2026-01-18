@@ -4,3 +4,4 @@ perf.data
 *benchmark-results.txt
 coverage
 docs/plans/
+.idea/
