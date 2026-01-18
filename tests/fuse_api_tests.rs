@@ -247,3 +247,73 @@ fn test_getattr_nonexistent_inode() {
     // Should fail - invalid inode
     assert!(result.is_err(), "getattr should fail");
 }
+
+// ============================================================================
+// Access Tests
+// ============================================================================
+
+/// Simulate access by using Zthfs's internal permission checking
+fn simulate_access(fs: &mut Zthfs, req: &TestRequest, ino: u64, _mask: i32) -> Result<(), i32> {
+    let uid = req.uid;
+    let gid = req.gid;
+
+    // Get the path from inode (to verify it exists)
+    let _path = match fs.get_path_for_inode(ino) {
+        Some(p) => p,
+        None => return Err(libc::ENOENT),
+    };
+
+    // Check permission (ZthFS doesn't evaluate the mask parameter)
+    if !fs.check_permission(uid, gid) {
+        return Err(libc::EACCES);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_access_authorized_user() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    let req = TestRequest::unprivileged();
+
+    let result = simulate_access(&mut fs, &req, ROOT_INODE, 0);
+
+    assert!(result.is_ok(), "authorized user should have access");
+}
+
+#[test]
+fn test_access_unauthorized_user() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    let req = TestRequest::new(99999, 99999);
+
+    let result = simulate_access(&mut fs, &req, ROOT_INODE, 0);
+
+    assert!(result.is_err(), "unauthorized user should be denied");
+    assert_eq!(result.unwrap_err(), libc::EACCES, "should return EACCES");
+}
+
+#[test]
+fn test_access_read_mask() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    let req = TestRequest::unprivileged();
+
+    // Request read access (R_OK = 4)
+    let result = simulate_access(&mut fs, &req, ROOT_INODE, 4);
+
+    assert!(result.is_ok(), "authorized user should have read access");
+}
+
+#[test]
+fn test_access_write_mask() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    let req = TestRequest::unprivileged();
+
+    // Request write access (W_OK = 2)
+    let result = simulate_access(&mut fs, &req, ROOT_INODE, 2);
+
+    assert!(result.is_ok(), "authorized user should have write access");
+}
