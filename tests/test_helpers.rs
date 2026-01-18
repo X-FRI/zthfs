@@ -5,7 +5,7 @@
 
 use std::path::Path;
 use tempfile::TempDir;
-use zthfs::config::{FilesystemConfig, FilesystemConfigBuilder, LogConfig};
+use zthfs::config::{EncryptionConfig, FilesystemConfig, FilesystemConfigBuilder, LogConfig};
 use zthfs::fs_impl::Zthfs;
 
 /// Creates a test filesystem configuration with disabled logging and permissive security
@@ -14,9 +14,10 @@ pub fn create_test_config(data_dir: &Path) -> FilesystemConfig {
     let current_uid = unsafe { libc::getuid() };
     let current_gid = unsafe { libc::getgid() };
 
-    // Build base config
+    // Build base config with secure random keys for testing
     let mut config = FilesystemConfigBuilder::new()
         .data_dir(data_dir.to_string_lossy().to_string())
+        .encryption(EncryptionConfig::with_random_keys())
         .logging(LogConfig {
             enabled: false,
             file_path: String::new(),
@@ -80,6 +81,7 @@ impl Default for TestFs {
 
         let config = FilesystemConfigBuilder::new()
             .data_dir(data_dir.path().to_string_lossy().to_string())
+            .encryption(EncryptionConfig::with_random_keys())
             .logging(LogConfig {
                 enabled: false,
                 file_path: String::new(),
