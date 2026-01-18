@@ -176,3 +176,74 @@ fn test_lookup_empty_filename() {
     assert_eq!(attr.ino, ROOT_INODE, "should return root inode");
     assert_eq!(attr.kind, fuser::FileType::Directory, "should be a directory");
 }
+
+// ============================================================================
+// GetAttr Tests
+// ============================================================================
+
+/// Simulate getattr by using Zthfs's internal methods
+fn simulate_getattr(fs: &mut Zthfs, req: &TestRequest, ino: u64) -> Result<fuser::FileAttr, i32> {
+    let uid = req.uid;
+    let gid = req.gid;
+
+    // Get the path from inode
+    let path = match fs.get_path_for_inode(ino) {
+        Some(p) => p,
+        None => return Err(libc::ENOENT),
+    };
+
+    // Check permission
+    if !fs.check_permission(uid, gid) {
+        return Err(libc::EACCES);
+    }
+
+    // Get attributes
+    match zthfs::fs_impl::attr_ops::get_attr(fs, &path) {
+        Ok(attr) => Ok(attr),
+        Err(_) => Err(libc::ENOENT),
+    }
+}
+
+#[test]
+fn test_getattr_existing_file() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    create_test_file(&fs, "test.txt", b"content");
+
+    let req = TestRequest::unprivileged();
+
+    // Get the inode for the file
+    let ino = fs.get_or_create_inode(std::path::Path::new("/test.txt")).unwrap();
+
+    let result = simulate_getattr(&mut fs, &req, ino);
+
+    assert!(result.is_ok(), "getattr should succeed");
+    let attr = result.unwrap();
+    assert_eq!(attr.size, 7, "file size should match");
+}
+
+#[test]
+fn test_getattr_root_directory() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    let req = TestRequest::unprivileged();
+
+    let result = simulate_getattr(&mut fs, &req, ROOT_INODE);
+
+    assert!(result.is_ok(), "getattr should succeed for root");
+    let attr = result.unwrap();
+    assert_eq!(attr.ino, ROOT_INODE, "root inode should be 1");
+    assert_eq!(attr.kind, fuser::FileType::Directory, "root should be a directory");
+}
+
+#[test]
+fn test_getattr_nonexistent_inode() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    let req = TestRequest::unprivileged();
+
+    let result = simulate_getattr(&mut fs, &req, 99999);
+
+    // Should fail - invalid inode
+    assert!(result.is_err(), "getattr should fail");
+}
