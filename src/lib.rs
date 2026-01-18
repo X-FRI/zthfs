@@ -58,6 +58,8 @@ pub mod errors;
 pub mod fs_impl;
 pub mod key_derivation;
 pub mod key_management;
+#[cfg(test)]
+mod security_tests;
 pub mod transactions;
 pub mod utils;
 
