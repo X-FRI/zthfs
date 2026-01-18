@@ -561,3 +561,94 @@ fn test_write_unauthorized_user() {
     assert!(result.is_err(), "unauthorized user should be denied");
     assert_eq!(result.unwrap_err(), libc::EACCES, "should return EACCES");
 }
+
+// ============================================================================
+// Readdir Tests
+// ============================================================================
+
+/// Simulate readdir by using Zthfs's internal directory reading
+fn simulate_readdir(fs: &mut Zthfs, req: &TestRequest, ino: u64) -> Result<Vec<String>, i32> {
+    let uid = req.uid;
+    let gid = req.gid;
+
+    // Get the path from inode
+    let path = match fs.get_path_for_inode(ino) {
+        Some(p) => p,
+        None => return Err(libc::ENOENT),
+    };
+
+    // Check permission
+    if !fs.check_permission(uid, gid) {
+        return Err(libc::EACCES);
+    }
+
+    // Strip leading "/" for actual filesystem path
+    let relative_path = path.to_string_lossy();
+    let relative_path_str = relative_path.as_ref();
+    let fs_path = if relative_path_str.starts_with('/') {
+        fs.data_dir().join(&relative_path_str[1..])
+    } else {
+        fs.data_dir().join(relative_path_str)
+    };
+
+    // Read directory entries
+    match std::fs::read_dir(&fs_path) {
+        Ok(entries) => {
+            let mut names = Vec::new();
+            for entry in entries {
+                if let Ok(e) = entry {
+                    if let Ok(name) = e.file_name().into_string() {
+                        names.push(name);
+                    }
+                }
+            }
+            Ok(names)
+        }
+        Err(_) => Err(libc::ENOENT),
+    }
+}
+
+#[test]
+fn test_readdir_root() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    // Create some test files
+    create_test_file(&fs, "a.txt", b"a");
+    create_test_file(&fs, "b.txt", b"b");
+    create_test_file(&fs, "c.txt", b"c");
+
+    let req = TestRequest::unprivileged();
+
+    let result = simulate_readdir(&mut fs, &req, ROOT_INODE);
+
+    assert!(result.is_ok(), "readdir should succeed");
+    let entries = result.unwrap();
+    assert!(entries.len() >= 3, "should have at least 3 files");
+    // Note: may have additional entries (like inode_db)
+}
+
+#[test]
+fn test_readdir_empty_directory() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    let req = TestRequest::unprivileged();
+
+    let result = simulate_readdir(&mut fs, &req, ROOT_INODE);
+
+    assert!(result.is_ok(), "readdir should succeed");
+    let entries = result.unwrap();
+    // New filesystem should have minimal entries
+    assert!(entries.len() <= 5, "empty dir should have minimal entries");
+}
+
+#[test]
+fn test_readdir_nonexistent_directory() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    let req = TestRequest::unprivileged();
+
+    let result = simulate_readdir(&mut fs, &req, 99999);
+
+    // Should fail - directory doesn't exist
+    assert!(result.is_err(), "readdir should fail");
+}
