@@ -116,16 +116,13 @@ fn test_zthfs_result_type() {
     // Ok result
     let ok_result: ZthfsResult<i32> = Ok(42);
     assert!(ok_result.is_ok());
-    assert_eq!(ok_result.unwrap(), 42);
+    assert_eq!(ok_result, Ok(42));
 
     // Err result with different error variants
     let err_fs: ZthfsResult<i32> = Err(ZthfsError::Fs("test".to_string()));
     assert!(err_fs.is_err());
 
-    let err_io: ZthfsResult<i32> = Err(ZthfsError::Io(io::Error::new(
-        io::ErrorKind::Other,
-        "io error",
-    )));
+    let err_io: ZthfsResult<i32> = Err(ZthfsError::Io(io::Error::other("io error")));
     assert!(err_io.is_err());
 
     // Test map functionality
@@ -145,7 +142,7 @@ fn test_error_from_different_sources() {
     // Test conversion from different error sources
 
     // IO error
-    let io_err = io::Error::new(io::ErrorKind::Other, "io error");
+    let io_err = io::Error::other("io error");
     let zthfs_io: ZthfsError = io_err.into();
     assert!(matches!(zthfs_io, ZthfsError::Io(_)));
 
@@ -155,8 +152,7 @@ fn test_error_from_different_sources() {
     assert!(matches!(zthfs_json, ZthfsError::Serialization(_)));
 
     // Box error
-    let boxed: Box<dyn std::error::Error + Send + Sync> =
-        io::Error::new(io::ErrorKind::Other, "boxed").into();
+    let boxed: Box<dyn std::error::Error + Send + Sync> = io::Error::other("boxed").into();
     let zthfs_boxed: ZthfsError = boxed.into();
     assert!(matches!(zthfs_boxed, ZthfsError::Fs(_)));
 

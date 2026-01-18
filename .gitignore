@@ -3,3 +3,4 @@ flamegraph.svg
 perf.data
 *benchmark-results.txt
 coverage
+docs/plans/

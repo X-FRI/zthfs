@@ -12,12 +12,17 @@ use tempfile::TempDir;
 /// Note: This is a simplified mock for testing. Creating actual fuser::Request
 /// instances requires internal FUSE channel state, so we use this simple struct
 /// to represent request parameters in tests.
+#[allow(dead_code)]
 pub struct MockRequest {
+    #[allow(dead_code)]
     pub uid: u32,
+    #[allow(dead_code)]
     pub gid: u32,
+    #[allow(dead_code)]
     pub pid: u32,
 }
 
+#[allow(dead_code)]
 impl MockRequest {
     pub fn new(uid: u32, gid: u32) -> Self {
         Self {
@@ -57,6 +62,7 @@ impl MockRequest {
 ///
 /// TODO: This trait will be used in future tasks for testing FUSE reply verification.
 /// Currently unused as reply testing requires more complex FUSE integration.
+#[allow(dead_code)]
 pub trait ReplyExt {
     fn is_error(&self) -> bool;
     fn error_code(&self) -> Option<i32>;
@@ -66,12 +72,14 @@ pub trait ReplyExt {
 ///
 /// TODO: This struct will be used in future tasks for capturing and verifying FUSE reply
 /// state. Currently unused as reply testing requires more complex FUSE integration.
+#[allow(dead_code)]
 pub struct TestReply<T> {
     pub reply: Option<T>,
     pub error: Option<i32>,
     pub called: bool,
 }
 
+#[allow(dead_code)]
 impl<T> TestReply<T> {
     pub fn new() -> Self {
         Self {

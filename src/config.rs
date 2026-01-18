@@ -206,7 +206,10 @@ impl IntegrityConfig {
 
     /// Get the HMAC key, validating its length
     pub fn get_hmac_key(&self) -> Option<&[u8]> {
-        self.hmac_key.as_ref().filter(|k| k.len() >= 32).map(|k| k.as_slice())
+        self.hmac_key
+            .as_ref()
+            .filter(|k| k.len() >= 32)
+            .map(|k| k.as_slice())
     }
 }
 

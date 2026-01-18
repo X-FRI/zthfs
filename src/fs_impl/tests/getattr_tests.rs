@@ -48,7 +48,11 @@ mod tests {
         // For non-chunked files, size is the actual file size (9 bytes for "test data")
         assert_eq!(attr.size, 9, "File size should match");
         assert!(attr.ino > 1, "Inode should be greater than root");
-        assert_eq!(attr.kind, fuser::FileType::RegularFile, "Should be regular file");
+        assert_eq!(
+            attr.kind,
+            fuser::FileType::RegularFile,
+            "Should be regular file"
+        );
     }
 
     #[test]
@@ -209,8 +213,17 @@ mod tests {
         assert!(attr1.ino > 1);
         assert!(attr2.ino > 1);
         assert!(attr3.ino > 1);
-        assert_ne!(attr1.ino, attr2.ino, "Different files should have different inodes");
-        assert_ne!(attr2.ino, attr3.ino, "Different files should have different inodes");
-        assert_ne!(attr1.ino, attr3.ino, "Different files should have different inodes");
+        assert_ne!(
+            attr1.ino, attr2.ino,
+            "Different files should have different inodes"
+        );
+        assert_ne!(
+            attr2.ino, attr3.ino,
+            "Different files should have different inodes"
+        );
+        assert_ne!(
+            attr1.ino, attr3.ino,
+            "Different files should have different inodes"
+        );
     }
 }

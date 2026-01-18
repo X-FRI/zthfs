@@ -73,9 +73,13 @@ mod tests {
         // Try to read more data than the file contains
         let buffer_size = 100u32;
         let read_data =
-            crate::fs_impl::file_read::read_partial_chunked(&fs, file_path, 0, buffer_size).unwrap();
+            crate::fs_impl::file_read::read_partial_chunked(&fs, file_path, 0, buffer_size)
+                .unwrap();
 
-        assert_eq!(read_data, test_data, "Should only return actual file content");
+        assert_eq!(
+            read_data, test_data,
+            "Should only return actual file content"
+        );
         assert!(
             read_data.len() < buffer_size as usize,
             "Read size should be limited by file size"
@@ -94,7 +98,10 @@ mod tests {
         // Try to read a file that doesn't exist
         let result = crate::fs_impl::file_read::read_file(&fs, nonexistent_path);
 
-        assert!(result.is_err(), "Reading nonexistent file should return an error");
+        assert!(
+            result.is_err(),
+            "Reading nonexistent file should return an error"
+        );
 
         // Verify the error type
         match result {
@@ -124,7 +131,10 @@ mod tests {
 
         // But reading back gives the original decrypted data
         let read_data = crate::fs_impl::file_read::read_file(&fs, file_path).unwrap();
-        assert_eq!(read_data, test_data, "Decrypted read should match original data");
+        assert_eq!(
+            read_data, test_data,
+            "Decrypted read should match original data"
+        );
 
         // Clean up
         crate::fs_impl::file_create::remove_file(&fs, file_path).unwrap();
@@ -147,7 +157,10 @@ mod tests {
         // Read with offset/partial should also work
         let partial_data =
             crate::fs_impl::file_read::read_partial_chunked(&fs, file_path, 0, 100).unwrap();
-        assert!(partial_data.is_empty(), "Partial read of empty file should be empty");
+        assert!(
+            partial_data.is_empty(),
+            "Partial read of empty file should be empty"
+        );
 
         // Clean up
         crate::fs_impl::file_create::remove_file(&fs, file_path).unwrap();
@@ -167,7 +180,10 @@ mod tests {
 
         // Read entire file
         let read_data = crate::fs_impl::file_read::read_file(&fs, file_path).unwrap();
-        assert_eq!(read_data, test_data, "Should read entire chunked file correctly");
+        assert_eq!(
+            read_data, test_data,
+            "Should read entire chunked file correctly"
+        );
 
         // Read from middle of first chunk
         let offset = 100i64;
@@ -237,7 +253,10 @@ mod tests {
         // Read multiple times and verify consistency
         for _ in 0..5 {
             let read_data = crate::fs_impl::file_read::read_file(&fs, file_path).unwrap();
-            assert_eq!(read_data, test_data, "Multiple reads should return consistent data");
+            assert_eq!(
+                read_data, test_data,
+                "Multiple reads should return consistent data"
+            );
         }
 
         // Clean up

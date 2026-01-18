@@ -5,6 +5,6 @@
 //! rather than on testing the error type conversions themselves (which are covered
 //! in src/errors.rs).
 
+mod corruption_tests;
 mod io_tests;
 mod permission_tests;
-mod corruption_tests;

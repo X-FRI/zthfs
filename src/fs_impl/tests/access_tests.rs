@@ -6,8 +6,8 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::fs_impl::tests::fuse_test_utils::create_test_fs;
     use crate::fs_impl::security::FileAccess;
+    use crate::fs_impl::tests::fuse_test_utils::create_test_fs;
 
     /// Helper to create a test file at a given path in the real data directory
     fn setup_test_file(fs: &crate::fs_impl::Zthfs, path: &std::path::Path) {
@@ -15,7 +15,7 @@ mod tests {
             path.to_str()
                 .unwrap()
                 .strip_prefix('/')
-                .unwrap_or(path.to_str().unwrap())
+                .unwrap_or(path.to_str().unwrap()),
         );
 
         // Create parent directories if needed
@@ -57,10 +57,7 @@ mod tests {
         let (_temp_dir, fs) = create_test_fs();
 
         // Root (uid=0) should always have access in current implementation
-        assert!(
-            fs.check_permission(0, 0),
-            "Root should have permission"
-        );
+        assert!(fs.check_permission(0, 0), "Root should have permission");
     }
 
     #[test]
@@ -102,12 +99,7 @@ mod tests {
         let gid = unsafe { libc::getgid() };
 
         // Test R_OK access mask (4) - Current implementation allows all for authorized users
-        let has_access = fs.check_file_access(
-            uid,
-            gid,
-            FileAccess::Read,
-            file_attr.as_ref(),
-        );
+        let has_access = fs.check_file_access(uid, gid, FileAccess::Read, file_attr.as_ref());
 
         assert!(has_access, "Authorized user should have read access");
     }
@@ -126,12 +118,7 @@ mod tests {
         let gid = unsafe { libc::getgid() };
 
         // Test W_OK access mask (2)
-        let has_access = fs.check_file_access(
-            uid,
-            gid,
-            FileAccess::Write,
-            None,
-        );
+        let has_access = fs.check_file_access(uid, gid, FileAccess::Write, None);
 
         assert!(has_access, "Authorized user should have write access");
     }
@@ -146,12 +133,7 @@ mod tests {
         let gid = unsafe { libc::getgid() };
 
         // Test X_OK access mask (1)
-        let has_access = fs.check_file_access(
-            uid,
-            gid,
-            FileAccess::Execute,
-            None,
-        );
+        let has_access = fs.check_file_access(uid, gid, FileAccess::Execute, None);
 
         assert!(has_access, "Authorized user should have execute access");
     }
@@ -165,12 +147,7 @@ mod tests {
         setup_test_file(&fs, test_path);
 
         // Unauthorized user should not have access
-        let has_access = fs.check_file_access(
-            99999,
-            99999,
-            FileAccess::Read,
-            None,
-        );
+        let has_access = fs.check_file_access(99999, 99999, FileAccess::Read, None);
 
         assert!(!has_access, "Unauthorized user should not have read access");
     }
@@ -184,14 +161,12 @@ mod tests {
         setup_test_file(&fs, test_path);
 
         // Unauthorized user should not have write access
-        let has_access = fs.check_file_access(
-            99999,
-            99999,
-            FileAccess::Write,
-            None,
-        );
+        let has_access = fs.check_file_access(99999, 99999, FileAccess::Write, None);
 
-        assert!(!has_access, "Unauthorized user should not have write access");
+        assert!(
+            !has_access,
+            "Unauthorized user should not have write access"
+        );
     }
 
     #[test]
@@ -203,14 +178,12 @@ mod tests {
         setup_test_file(&fs, test_path);
 
         // Unauthorized user should not have execute access
-        let has_access = fs.check_file_access(
-            99999,
-            99999,
-            FileAccess::Execute,
-            None,
-        );
+        let has_access = fs.check_file_access(99999, 99999, FileAccess::Execute, None);
 
-        assert!(!has_access, "Unauthorized user should not have execute access");
+        assert!(
+            !has_access,
+            "Unauthorized user should not have execute access"
+        );
     }
 
     #[test]

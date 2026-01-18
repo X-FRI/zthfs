@@ -58,7 +58,7 @@ fn test_unauthorized_user_access() {
 fn test_unauthorized_group_access() {
     // Test that a user with unauthorized group is denied access
     let security = SecurityConfig {
-        allowed_users: vec![1000], // Only user 1000 allowed
+        allowed_users: vec![1000],  // Only user 1000 allowed
         allowed_groups: vec![1000], // Only group 1000 allowed
         encryption_strength: "high".to_string(),
         access_control_level: "strict".to_string(),
@@ -81,7 +81,7 @@ fn test_unauthorized_group_access() {
 fn test_empty_allowed_users() {
     // Test behavior when allowed_users is empty
     let security = SecurityConfig {
-        allowed_users: vec![], // No users explicitly allowed
+        allowed_users: vec![],      // No users explicitly allowed
         allowed_groups: vec![1000], // But group 1000 is allowed
         encryption_strength: "high".to_string(),
         access_control_level: "strict".to_string(),
@@ -135,18 +135,24 @@ fn test_security_validator_unauthorized_user() {
     // User 2000 is not in allowed_users
     // Even with permissive file permissions (0o777), should be denied
     assert!(!validator.check_file_permission(
-        2000,     // user_uid
-        2000,     // user_gid
-        1000,     // file_uid
-        1000,     // file_gid
-        0o777,    // file_mode (all permissions)
+        2000,  // user_uid
+        2000,  // user_gid
+        1000,  // file_uid
+        1000,  // file_gid
+        0o777, // file_mode (all permissions)
         FileAccess::Read,
-        None,     // no file path
+        None, // no file path
     ));
 
     // Same for write access
     assert!(!validator.check_file_permission(
-        2000, 2000, 1000, 1000, 0o777, FileAccess::Write, None,
+        2000,
+        2000,
+        1000,
+        1000,
+        0o777,
+        FileAccess::Write,
+        None,
     ));
 }
 
@@ -164,7 +170,13 @@ fn test_security_validator_unauthorized_group() {
 
     // User 2000 with group 2000 - group is not in allowed_groups
     assert!(!validator.check_file_permission(
-        2000, 2000, 1000, 1000, 0o777, FileAccess::Read, None,
+        2000,
+        2000,
+        1000,
+        1000,
+        0o777,
+        FileAccess::Read,
+        None,
     ));
 }
 
@@ -182,9 +194,7 @@ fn test_zero_trust_root_denied_without_permissions() {
 
     // Root (uid=0) is NOT in allowed_users, so should be denied
     // even with permissive file permissions
-    assert!(!validator.check_file_permission(
-        0, 0, 1000, 1000, 0o777, FileAccess::Read, None,
-    ));
+    assert!(!validator.check_file_permission(0, 0, 1000, 1000, 0o777, FileAccess::Read, None,));
 }
 
 #[test]
@@ -200,14 +210,10 @@ fn test_zero_trust_root_with_permissions() {
     let validator = SecurityValidator::new(config); // Zero-trust mode
 
     // File with no permissions - root should be denied in zero-trust mode
-    assert!(!validator.check_file_permission(
-        0, 0, 1000, 1000, 0o000, FileAccess::Read, None,
-    ));
+    assert!(!validator.check_file_permission(0, 0, 1000, 1000, 0o000, FileAccess::Read, None,));
 
     // With proper permissions, root can access
-    assert!(validator.check_file_permission(
-        0, 0, 1000, 1000, 0o644, FileAccess::Read, None,
-    ));
+    assert!(validator.check_file_permission(0, 0, 1000, 1000, 0o644, FileAccess::Read, None,));
 }
 
 #[test]
@@ -223,17 +229,11 @@ fn test_legacy_root_bypass() {
     let validator = SecurityValidator::with_legacy_root(config);
 
     // In legacy mode, root bypasses all file permissions
-    assert!(validator.check_file_permission(
-        0, 0, 1000, 1000, 0o000, FileAccess::Read, None,
-    ));
+    assert!(validator.check_file_permission(0, 0, 1000, 1000, 0o000, FileAccess::Read, None,));
 
-    assert!(validator.check_file_permission(
-        0, 0, 1000, 1000, 0o000, FileAccess::Write, None,
-    ));
+    assert!(validator.check_file_permission(0, 0, 1000, 1000, 0o000, FileAccess::Write, None,));
 
-    assert!(validator.check_file_permission(
-        0, 0, 1000, 1000, 0o000, FileAccess::Execute, None,
-    ));
+    assert!(validator.check_file_permission(0, 0, 1000, 1000, 0o000, FileAccess::Execute, None,));
 }
 
 #[test]
@@ -249,11 +249,7 @@ fn test_permission_denied_all_operations() {
     let validator = SecurityValidator::new(config);
 
     // User 2000 is not authorized
-    let operations = vec![
-        FileAccess::Read,
-        FileAccess::Write,
-        FileAccess::Execute,
-    ];
+    let operations = vec![FileAccess::Read, FileAccess::Write, FileAccess::Execute];
 
     for op in operations {
         assert!(
@@ -280,10 +276,22 @@ fn test_authorized_user_with_insufficient_file_permissions() {
     // User 2000 is "other" (not owner, not in group 1000)
     // Mode 0o600 = rw------- (owner: rw, group: ---, other: ---)
     assert!(!validator.check_file_permission(
-        2000, 2000, 1000, 1000, 0o600, FileAccess::Read, None,
+        2000,
+        2000,
+        1000,
+        1000,
+        0o600,
+        FileAccess::Read,
+        None,
     ));
 
     assert!(!validator.check_file_permission(
-        2000, 2000, 1000, 1000, 0o600, FileAccess::Write, None,
+        2000,
+        2000,
+        1000,
+        1000,
+        0o600,
+        FileAccess::Write,
+        None,
     ));
 }

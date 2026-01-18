@@ -29,22 +29,26 @@ fn test_zero_trust_root_no_special_privileges() {
     // Root (uid=0) should NOT bypass permission check in zero-trust mode
     // File owned by user 1000 with no permissions
     let result = validator.check_file_permission_legacy(
-        0,      // root uid
-        0,      // root gid
-        1000,   // file owner
-        1000,   // file group
-        0o000,  // no permissions
+        0,     // root uid
+        0,     // root gid
+        1000,  // file owner
+        1000,  // file group
+        0o000, // no permissions
         FileAccess::Read,
     );
 
     // SAFETY: Root should be denied in zero-trust mode when not in allowed_users
-    assert!(!result, "Root should be denied in zero-trust mode when not in allowed list");
+    assert!(
+        !result,
+        "Root should be denied in zero-trust mode when not in allowed list"
+    );
 
     // Even with permissive file permissions, root should be denied if not in allowed list
-    let result2 = validator.check_file_permission_legacy(
-        0, 0, 1000, 1000, 0o777, FileAccess::Read,
+    let result2 = validator.check_file_permission_legacy(0, 0, 1000, 1000, 0o777, FileAccess::Read);
+    assert!(
+        !result2,
+        "Root should be denied if not in allowed_users, even with 0o777"
     );
-    assert!(!result2, "Root should be denied if not in allowed_users, even with 0o777");
 }
 
 /// Test that legacy mode grants root special privileges.
@@ -72,15 +76,18 @@ fn test_legacy_root_has_privileges() {
 
     // In legacy mode, root bypasses all file permission checks
     let result = validator.check_file_permission_legacy(
-        0,      // root uid
-        0,      // root gid
-        1000,   // file owner (not root)
-        1000,   // file group (not root)
-        0o000,  // no permissions at all
+        0,     // root uid
+        0,     // root gid
+        1000,  // file owner (not root)
+        1000,  // file group (not root)
+        0o000, // no permissions at all
         FileAccess::Read,
     );
 
-    assert!(result, "Root should bypass permission checks in legacy mode");
+    assert!(
+        result,
+        "Root should bypass permission checks in legacy mode"
+    );
 
     // Test write and execute as well
     assert!(
@@ -112,22 +119,37 @@ fn test_access_mask_read_only() {
 
     // User 1000 owns the file
     // Check read access - should succeed
-    let can_read = validator.check_file_permission_legacy(
-        1000, 1000, 1000, 1000, file_mode, FileAccess::Read,
-    );
+    let can_read =
+        validator.check_file_permission_legacy(1000, 1000, 1000, 1000, file_mode, FileAccess::Read);
     assert!(can_read, "Owner should have read access on 0o444 file");
 
     // Check write access - should fail
     let can_write = validator.check_file_permission_legacy(
-        1000, 1000, 1000, 1000, file_mode, FileAccess::Write,
+        1000,
+        1000,
+        1000,
+        1000,
+        file_mode,
+        FileAccess::Write,
     );
-    assert!(!can_write, "Owner should NOT have write access on 0o444 file");
+    assert!(
+        !can_write,
+        "Owner should NOT have write access on 0o444 file"
+    );
 
     // Check execute access - should fail
     let can_execute = validator.check_file_permission_legacy(
-        1000, 1000, 1000, 1000, file_mode, FileAccess::Execute,
+        1000,
+        1000,
+        1000,
+        1000,
+        file_mode,
+        FileAccess::Execute,
     );
-    assert!(!can_execute, "Owner should NOT have execute access on 0o444 file");
+    assert!(
+        !can_execute,
+        "Owner should NOT have execute access on 0o444 file"
+    );
 }
 
 /// Test group-based access control.
@@ -149,30 +171,44 @@ fn test_group_access_control() {
 
     // User 1001 is in group 1000, file is owned by user 1000:1000
     let can_read = validator.check_file_permission_legacy(
-        1001,   // user uid (not owner)
-        1000,   // user gid (matches file group)
-        1000,   // file owner uid
-        1000,   // file group gid
+        1001, // user uid (not owner)
+        1000, // user gid (matches file group)
+        1000, // file owner uid
+        1000, // file group gid
         file_mode,
         FileAccess::Read,
     );
-    assert!(can_read, "User in file's group should have group read access");
+    assert!(
+        can_read,
+        "User in file's group should have group read access"
+    );
 
     let can_write = validator.check_file_permission_legacy(
-        1001, 1000, 1000, 1000, file_mode, FileAccess::Write,
+        1001,
+        1000,
+        1000,
+        1000,
+        file_mode,
+        FileAccess::Write,
     );
-    assert!(!can_write, "User in file's group should NOT have write when group perms are 0o040");
+    assert!(
+        !can_write,
+        "User in file's group should NOT have write when group perms are 0o040"
+    );
 
     // User 2000 is NOT in group 1000, should not get group permissions
     let cannot_read = validator.check_file_permission_legacy(
-        2000,   // user uid (not owner)
-        2000,   // user gid (not file group)
-        1000,   // file owner uid
-        1000,   // file group gid
+        2000, // user uid (not owner)
+        2000, // user gid (not file group)
+        1000, // file owner uid
+        1000, // file group gid
         file_mode,
         FileAccess::Read,
     );
-    assert!(!cannot_read, "User not in file's group should not get group access");
+    assert!(
+        !cannot_read,
+        "User not in file's group should not get group access"
+    );
 }
 
 /// Test that users with no permissions are denied access.
@@ -196,24 +232,43 @@ fn test_world_access_denied() {
     // User 2000 is NOT the owner (1000) and NOT in group 1000
     // So they get "other" permissions, which are 0
     let no_read = validator.check_file_permission_legacy(
-        2000,   // user uid (not owner)
-        2000,   // user gid (not file group)
-        1000,   // file owner uid
-        1000,   // file group gid
+        2000, // user uid (not owner)
+        2000, // user gid (not file group)
+        1000, // file owner uid
+        1000, // file group gid
         file_mode,
         FileAccess::Read,
     );
-    assert!(!no_read, "User with no matching permissions should be denied read");
+    assert!(
+        !no_read,
+        "User with no matching permissions should be denied read"
+    );
 
     let no_write = validator.check_file_permission_legacy(
-        2000, 2000, 1000, 1000, file_mode, FileAccess::Write,
+        2000,
+        2000,
+        1000,
+        1000,
+        file_mode,
+        FileAccess::Write,
     );
-    assert!(!no_write, "User with no matching permissions should be denied write");
+    assert!(
+        !no_write,
+        "User with no matching permissions should be denied write"
+    );
 
     let no_execute = validator.check_file_permission_legacy(
-        2000, 2000, 1000, 1000, file_mode, FileAccess::Execute,
+        2000,
+        2000,
+        1000,
+        1000,
+        file_mode,
+        FileAccess::Execute,
     );
-    assert!(!no_execute, "User with no matching permissions should be denied execute");
+    assert!(
+        !no_execute,
+        "User with no matching permissions should be denied execute"
+    );
 }
 
 /// Test that the owner permission bits take precedence.
@@ -233,7 +288,7 @@ fn test_owner_permission_precedence() {
 
     // File where owner has no write, but group does
     let file_mode = 0o470; // rwxrwx--- (owner: r--, group: rwx, other: ---)
-                          // Actually in octal: 4 (r) 7 (rwx) 0 (---)
+    // Actually in octal: 4 (r) 7 (rwx) 0 (---)
     // Wait, let me recalculate:
     // 0o470 = 0b100_111_000
     // Owner: r-- (4)
@@ -242,20 +297,35 @@ fn test_owner_permission_precedence() {
 
     // User 1000 owns the file and is in group 1000
     // Owner permissions should apply (read only)
-    let can_read = validator.check_file_permission_legacy(
-        1000, 1000, 1000, 1000, file_mode, FileAccess::Read,
-    );
+    let can_read =
+        validator.check_file_permission_legacy(1000, 1000, 1000, 1000, file_mode, FileAccess::Read);
     assert!(can_read, "Owner should have read access");
 
     let cannot_write = validator.check_file_permission_legacy(
-        1000, 1000, 1000, 1000, file_mode, FileAccess::Write,
+        1000,
+        1000,
+        1000,
+        1000,
+        file_mode,
+        FileAccess::Write,
     );
-    assert!(!cannot_write, "Owner permissions should override group permissions");
+    assert!(
+        !cannot_write,
+        "Owner permissions should override group permissions"
+    );
 
     let cannot_execute = validator.check_file_permission_legacy(
-        1000, 1000, 1000, 1000, file_mode, FileAccess::Execute,
+        1000,
+        1000,
+        1000,
+        1000,
+        file_mode,
+        FileAccess::Execute,
     );
-    assert!(!cannot_execute, "Owner permissions should override group permissions");
+    assert!(
+        !cannot_execute,
+        "Owner permissions should override group permissions"
+    );
 }
 
 /// test that users not in allowed_users are denied even with file permissions.
@@ -264,8 +334,8 @@ fn test_owner_permission_precedence() {
 #[test]
 fn test_allowed_users_enforcement() {
     let config = SecurityConfig {
-        allowed_users: vec![1000],    // Only user 1000 allowed
-        allowed_groups: vec![],       // No groups allowed
+        allowed_users: vec![1000], // Only user 1000 allowed
+        allowed_groups: vec![],    // No groups allowed
         encryption_strength: "high".to_string(),
         access_control_level: "strict".to_string(),
     };
@@ -275,20 +345,32 @@ fn test_allowed_users_enforcement() {
     // User 2000 is NOT in allowed_users, even though file has 0o777 permissions
     let file_mode = 0o777; // All permissions for everyone
 
-    let denied_read = validator.check_file_permission_legacy(
-        2000, 2000, 2000, 2000, file_mode, FileAccess::Read,
-    );
+    let denied_read =
+        validator.check_file_permission_legacy(2000, 2000, 2000, 2000, file_mode, FileAccess::Read);
     assert!(!denied_read, "User not in allowed_users should be denied");
 
     let denied_write = validator.check_file_permission_legacy(
-        2000, 2000, 2000, 2000, file_mode, FileAccess::Write,
+        2000,
+        2000,
+        2000,
+        2000,
+        file_mode,
+        FileAccess::Write,
     );
     assert!(!denied_write, "User not in allowed_users should be denied");
 
     let denied_execute = validator.check_file_permission_legacy(
-        2000, 2000, 2000, 2000, file_mode, FileAccess::Execute,
+        2000,
+        2000,
+        2000,
+        2000,
+        file_mode,
+        FileAccess::Execute,
     );
-    assert!(!denied_execute, "User not in allowed_users should be denied");
+    assert!(
+        !denied_execute,
+        "User not in allowed_users should be denied"
+    );
 }
 
 /// Test that users in allowed_groups are granted access.
@@ -297,8 +379,8 @@ fn test_allowed_users_enforcement() {
 #[test]
 fn test_allowed_groups_enforcement() {
     let config = SecurityConfig {
-        allowed_users: vec![],       // No individual users allowed
-        allowed_groups: vec![1000],  // Group 1000 allowed
+        allowed_users: vec![],      // No individual users allowed
+        allowed_groups: vec![1000], // Group 1000 allowed
         encryption_strength: "high".to_string(),
         access_control_level: "strict".to_string(),
     };
@@ -309,10 +391,10 @@ fn test_allowed_groups_enforcement() {
     let file_mode = 0o600; // Owner only
 
     let has_access = validator.check_file_permission_legacy(
-        2000,   // User uid
-        1000,   // User gid (in allowed_groups)
-        2000,   // File owner
-        2000,   // File group
+        2000, // User uid
+        1000, // User gid (in allowed_groups)
+        2000, // File owner
+        2000, // File group
         file_mode,
         FileAccess::Read,
     );
@@ -336,20 +418,25 @@ fn test_zero_trust_root_with_permissions() {
 
     // File with no permissions - root should be denied in zero-trust mode
     let no_access = validator.check_file_permission_legacy(
-        0,      // root uid
-        0,      // root gid
-        1000,   // file owner
-        1000,   // file group
-        0o000,  // no permissions
+        0,     // root uid
+        0,     // root gid
+        1000,  // file owner
+        1000,  // file group
+        0o000, // no permissions
         FileAccess::Read,
     );
-    assert!(!no_access, "Root should be denied with 0o000 in zero-trust mode");
+    assert!(
+        !no_access,
+        "Root should be denied with 0o000 in zero-trust mode"
+    );
 
     // With proper permissions, root can access
-    let has_access = validator.check_file_permission_legacy(
-        0, 0, 1000, 1000, 0o644, FileAccess::Read,
+    let has_access =
+        validator.check_file_permission_legacy(0, 0, 1000, 1000, 0o644, FileAccess::Read);
+    assert!(
+        has_access,
+        "Root should have access with proper permissions in zero-trust mode"
     );
-    assert!(has_access, "Root should have access with proper permissions in zero-trust mode");
 }
 
 /// Test all permission combinations.
@@ -381,20 +468,35 @@ fn test_all_permission_combinations() {
         (0o006, 1001, 1000, false, false, false), // In group (no group perms)
         (0o006, 2000, 2000, true, true, false),   // Other
         // Full permissions
-        (0o755, 1000, 1000, true, true, true),    // Owner
-        (0o755, 1001, 1000, true, false, true),   // Group (r-x)
-        (0o755, 2000, 2000, true, false, true),   // Other (r-x)
+        (0o755, 1000, 1000, true, true, true),  // Owner
+        (0o755, 1001, 1000, true, false, true), // Group (r-x)
+        (0o755, 2000, 2000, true, false, true), // Other (r-x)
     ];
 
     for (file_mode, uid, gid, expected_read, expected_write, expected_execute) in test_cases {
         let can_read = validator.check_file_permission_legacy(
-            uid, gid, 1000, 1000, file_mode, FileAccess::Read,
+            uid,
+            gid,
+            1000,
+            1000,
+            file_mode,
+            FileAccess::Read,
         );
         let can_write = validator.check_file_permission_legacy(
-            uid, gid, 1000, 1000, file_mode, FileAccess::Write,
+            uid,
+            gid,
+            1000,
+            1000,
+            file_mode,
+            FileAccess::Write,
         );
         let can_execute = validator.check_file_permission_legacy(
-            uid, gid, 1000, 1000, file_mode, FileAccess::Execute,
+            uid,
+            gid,
+            1000,
+            1000,
+            file_mode,
+            FileAccess::Execute,
         );
 
         assert_eq!(

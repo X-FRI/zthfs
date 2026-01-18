@@ -177,6 +177,69 @@ Tests FUSE-specific operations:
 - Attribute handling
 - Extended attributes
 
+### FUSE API Tests (`fuse_api_tests.rs`)
+
+Tests FUSE operations by calling Filesystem trait methods directly (via internal simulation helpers), without requiring root privileges or actual FUSE mounting:
+
+**Lookup tests (7 tests):**
+- `test_lookup_existing_file` - Verify successful file lookup
+- `test_lookup_nonexistent_file` - Verify ENOENT for missing files
+- `test_lookup_directory` - Verify directory lookup
+- `test_lookup_unauthorized_user` - Verify EACCES for unauthorized users
+- `test_lookup_root_user_always_authorized` - Verify root always has access
+- `test_lookup_invalid_parent_inode` - Verify ENOENT for invalid parent
+- `test_lookup_empty_filename` - Verify behavior with empty filename
+
+**GetAttr tests (3 tests):**
+- `test_getattr_existing_file` - Verify attribute retrieval for existing file
+- `test_getattr_root_directory` - Verify root directory attributes
+- `test_getattr_nonexistent_inode` - Verify ENOENT for invalid inode
+
+**Access tests (4 tests):**
+- `test_access_authorized_user` - Verify authorized user access
+- `test_access_unauthorized_user` - Verify EACCES for unauthorized users
+- `test_access_read_mask` - Verify read access mask handling
+- `test_access_write_mask` - Verify write access mask handling
+
+**Create tests (3 tests):**
+- `test_create_new_file` - Verify successful file creation
+- `test_create_in_nested_path` - Verify creation with nested paths
+- `test_create_unauthorized_user` - Verify EACCES for unauthorized users
+
+**Read tests (3 tests):**
+- `test_read_existing_file` - Verify successful file reading
+- `test_read_nonexistent_file` - Verify error for nonexistent file
+- `test_read_unauthorized_user` - Verify EACCES for unauthorized users
+
+**Write tests (3 tests):**
+- `test_write_new_file` - Verify successful file writing
+- `test_write_append` - Verify appending to existing files
+- `test_write_unauthorized_user` - Verify EACCES for unauthorized users
+
+**Readdir tests (3 tests):**
+- `test_readdir_root` - Verify reading root directory with files
+- `test_readdir_empty_directory` - Verify reading empty directory
+- `test_readdir_nonexistent_directory` - Verify error for invalid inode
+
+**Mkdir tests (2 tests):**
+- `test_mkdir_new_directory` - Verify successful directory creation
+- `test_mkdir_unauthorized` - Verify EACCES for unauthorized users
+
+**Unlink tests (2 tests):**
+- `test_unlink_existing_file` - Verify successful file deletion
+- `test_unlink_nonexistent_file` - Verify error for nonexistent file
+
+**Rmdir tests (2 tests):**
+- `test_rmdir_existing_directory` - Verify successful directory removal
+- `test_rmdir_nonexistent_directory` - Verify error for nonexistent directory
+
+**Note:** These tests run without any special permissions and are suitable for CI/CD.
+
+Run with:
+```bash
+cargo test --test fuse_api_tests
+```
+
 ### Property-Based Tests (`property_tests.rs`)
 
 Uses the `proptest` crate to verify invariants across random inputs:

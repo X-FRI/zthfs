@@ -196,7 +196,7 @@ impl Zthfs {
             // We add 2 to skip inode 1 (reserved for root directory)
             // sled's generate_id() starts at 0, so first file gets 0+2=2
             let raw_id = self.inode_db.generate_id()?;
-            let inode = raw_id.saturating_add(2);  // Start from 2, skip root (1)
+            let inode = raw_id.saturating_add(2); // Start from 2, skip root (1)
             let inode_bytes = inode.to_be_bytes();
             let inode_key = IVec::from(&inode_bytes[..]); // inode as key for reverse mapping
 
@@ -1216,14 +1216,7 @@ impl Filesystem for Zthfs {
 
     /// Flush pending changes. Called when a file is closed or explicitly flushed.
     /// This is important for proper file handle cleanup after create().
-    fn flush(
-        &mut self,
-        _req: &Request,
-        _ino: u64,
-        _fh: u64,
-        _lock_owner: u64,
-        reply: ReplyEmpty,
-    ) {
+    fn flush(&mut self, _req: &Request, _ino: u64, _fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
         // For now, just acknowledge the flush.
         // In the future, this could sync data to disk.
         reply.ok();

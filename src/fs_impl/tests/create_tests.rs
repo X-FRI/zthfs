@@ -20,7 +20,10 @@ mod tests {
 
         // Verify file was created with correct attributes
         assert_eq!(attr.kind, fuser::FileType::RegularFile);
-        assert!(attr.ino > 1, "File inode should be greater than root inode (1)");
+        assert!(
+            attr.ino > 1,
+            "File inode should be greater than root inode (1)"
+        );
 
         // Verify file exists
         assert!(
@@ -52,7 +55,10 @@ mod tests {
 
             // Verify mode is set (permission bits may be masked by umask)
             // We check that the file was created successfully with a valid permission
-            assert!(attr.perm > 0, "File should have permissions set for {description}");
+            assert!(
+                attr.perm > 0,
+                "File should have permissions set for {description}"
+            );
 
             // Verify the file exists and is readable
             assert!(crate::fs_impl::path_ops::path_exists(&fs, file_path));
@@ -104,7 +110,10 @@ mod tests {
             );
 
             // Each inode should be greater than root (1)
-            assert!(attr.ino > 1, "File inode should be greater than root inode (1)");
+            assert!(
+                attr.ino > 1,
+                "File inode should be greater than root inode (1)"
+            );
         }
 
         // Clean up

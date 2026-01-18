@@ -8,6 +8,6 @@
 //! These tests are separate from unit tests and focus specifically on
 //! security properties and attack resistance.
 
+mod access_control_tests;
 mod encryption_tests;
 mod integrity_tests;
-mod access_control_tests;

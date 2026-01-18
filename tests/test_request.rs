@@ -10,6 +10,7 @@
 pub struct TestRequest {
     pub uid: u32,
     pub gid: u32,
+    #[allow(dead_code)]
     pub pid: u32,
 }
 
@@ -37,11 +38,13 @@ impl TestRequest {
     }
 
     /// Create a request with a specific user
+    #[allow(dead_code)]
     pub fn with_uid(uid: u32) -> Self {
         Self::new(uid, 0)
     }
 
     /// Create a request with a specific group
+    #[allow(dead_code)]
     pub fn with_gid(gid: u32) -> Self {
         Self::new(0, gid)
     }

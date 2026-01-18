@@ -4,6 +4,9 @@
 //! in memory instead of sending them to the kernel, enabling tests
 //! to run without root privileges or FUSE mounting.
 
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
 mod reply_attr;
 mod reply_create;
 mod reply_data;

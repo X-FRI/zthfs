@@ -1,13 +1,13 @@
-# ZTHFS - 零信任医疗文件系统
+# ZTHFS - Zero-Trust Healthcare Filesystem
 
 中文 | [English](README.md)
 
 [![License](https://img.shields.io/badge/license-BSD3--Clause-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70+-blue.svg)](https://www.rust-lang.org)
-[![Coverage](https://img.shields.io/badge/coverage-64.89%25-green.svg)](coverage/tarpaulin-report.html)
+[![Coverage](https://img.shields.io/badge/coverage-70.12%25-green.svg)](coverage/tarpaulin-report.html)
 [![Status](https://img.shields.io/badge/status-POC-yellow.svg)](https://github.com/somhairle/zthfs)
 
-> **注意：这是一个概念验证（PoC）项目。**虽然密码学核心和 FUSE 操作已实现并经过测试，但某些功能采用了简化实现，可能不直接适用于生产环境，需要进一步加固。
+> 注意：这是一个概念验证（PoC）项目。虽然密码学核心和 FUSE 操作已实现并经过测试，但某些功能采用了简化实现，可能不直接适用于生产环境，需要进一步加固。
 
 ## 摘要
 
@@ -212,12 +212,12 @@ let signature = IntegrityHandler::compute_hmac_signature(&checksum, &config.hmac
 
 基于密码的密钥存储使用 Argon2id，这是一种抗 GPU 和 ASIC 攻击的内存硬密钥派生函数。默认参数遵循 OWASP 对交互式登录的推荐：
 
-| 参数 | 值 | 说明 |
-|-----|-----|------|
-| 内存开销 | 64 MiB | 每次迭代所需内存 |
-| 时间开销 | 3 | 迭代次数 |
-| 并行度 | 4 | 并行度 |
-| 盐长度 | 16 字节 | 密码学安全随机盐 |
+| 参数     | 值      | 说明             |
+| -------- | ------- | ---------------- |
+| 内存开销 | 64 MiB  | 每次迭代所需内存 |
+| 时间开销 | 3       | 迭代次数         |
+| 并行度   | 4       | 并行度           |
+| 盐长度   | 16 字节 | 密码学安全随机盐 |
 
 ```rust
 use zthfs::key_derivation::{KeyDerivation, KeyDerivationConfig};
@@ -362,16 +362,16 @@ cache_size = 256
 
 ## 实现状态
 
-| 模块 | 状态 | 说明 |
-|-----|------|------|
-| 加密 | 完成 | AES-256-GCM + NonceManager |
-| 完整性 | 完成 | BLAKE3 + HMAC-SHA256 |
-| 安全 | 完成 | 零信任访问控制 |
-| 密钥管理 | 完成 | 基于文件的存储，支持轮转 |
-| 密钥派生 | 完成 | Argon2id KDF |
-| FUSE 操作 | 完成 | 全部 14 个操作已实现 |
-| HSM/KMS 后端 | 计划中 | 硬件安全模块集成 |
-| 分布式存储 | 计划中 | 多节点复制 |
+| 模块         | 状态   | 说明                       |
+| ------------ | ------ | -------------------------- |
+| 加密         | 完成   | AES-256-GCM + NonceManager |
+| 完整性       | 完成   | BLAKE3 + HMAC-SHA256       |
+| 安全         | 完成   | 零信任访问控制             |
+| 密钥管理     | 完成   | 基于文件的存储，支持轮转   |
+| 密钥派生     | 完成   | Argon2id KDF               |
+| FUSE 操作    | 完成   | 全部 14 个操作已实现       |
+| HSM/KMS 后端 | 计划中 | 硬件安全模块集成           |
+| 分布式存储   | 计划中 | 多节点复制                 |
 
 ## 测试
 
@@ -389,7 +389,7 @@ cargo tarpaulin --workspace --exclude-files '*/tests/*' --out Html
 cargo clippy --all-targets
 ```
 
-当前测试覆盖率：**64.89%** (1571/2421 行)
+当前测试覆盖率：**70.12%** (1617/2306 行)
 
 ## 安全考虑
 
@@ -397,14 +397,14 @@ cargo clippy --all-targets
 
 系统缓解以下威胁：
 
-| 威胁 | 缓解措施 |
-|-----|----------|
+| 威胁           | 缓解措施                    |
+| -------------- | --------------------------- |
 | 未授权数据访问 | AES-256-GCM 加密 + 访问控制 |
-| 数据篡改 | BLAKE3 校验和 + HMAC 签名 |
-| Nonce 重用攻击 | 基于计数器的 nonce 生成 |
-| 密码破解 | Argon2id + OWASP 参数 |
-| 权限提升 | 零信任 root 模型 |
-| 时序攻击 | 常量时间比较 |
+| 数据篡改       | BLAKE3 校验和 + HMAC 签名   |
+| Nonce 重用攻击 | 基于计数器的 nonce 生成     |
+| 密码破解       | Argon2id + OWASP 参数       |
+| 权限提升       | 零信任 root 模型            |
+| 时序攻击       | 常量时间比较                |
 
 ### 已知限制
 
@@ -416,12 +416,12 @@ cargo clippy --all-targets
 
 **生产就绪待办事项：**
 
-| 组件 | 当前行为 | 生产环境所需 |
-|-----|----------|-------------|
-| `access()` | 仅检查白名单；忽略 `_mask` | 单文件权限验证 |
-| `flush()` | 空操作存根 | 显式数据同步、缓冲区刷新 |
-| 权限模型 | 每用户全有或全无 | Unix 风格的每文件 rwx |
-| 审计日志 | 基本日志存在 | 结构化、防篡改审计 |
+| 组件       | 当前行为                   | 生产环境所需             |
+| ---------- | -------------------------- | ------------------------ |
+| `access()` | 仅检查白名单；忽略 `_mask` | 单文件权限验证           |
+| `flush()`  | 空操作存根                 | 显式数据同步、缓冲区刷新 |
+| 权限模型   | 每用户全有或全无           | Unix 风格的每文件 rwx    |
+| 审计日志   | 基本日志存在               | 结构化、防篡改审计       |
 
 ## 参考文献
 

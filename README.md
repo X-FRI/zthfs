@@ -1,12 +1,12 @@
 # ZTHFS - Zero-Trust Healthcare Filesystem
 
-[中文README](README_zh.md) | English
+[中文](README_zh.md) | English
 
 > **NOTICE: This is a proof-of-concept (PoC) project.** While the cryptographic core and FUSE operations are implemented and tested, certain features have simplified implementations that may not be suitable for production use without further hardening.
 
 [![License](https://img.shields.io/badge/license-BSD3--Clause-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70+-blue.svg)](https://www.rust-lang.org)
-[![Coverage](https://img.shields.io/badge/coverage-64.89%25-green.svg)](coverage/tarpaulin-report.html)
+[![Coverage](https://img.shields.io/badge/coverage-70.12%25-green.svg)](coverage/tarpaulin-report.html)
 [![Status](https://img.shields.io/badge/status-POC-yellow.svg)](https://github.com/somhairle/zthfs)
 
 ## Abstract
@@ -394,7 +394,21 @@ cargo tarpaulin --workspace --exclude-files '*/tests/*' --out Html
 cargo clippy --all-targets
 ```
 
-Current test coverage: **64.89%** (1571/2421 lines)
+#### No-Root FUSE API Testing
+
+The `fuse_api_tests` suite enables testing FUSE operations without root privileges by directly testing the Filesystem trait method implementations using simulation helpers.
+
+```bash
+# Run FUSE API tests (no root required)
+cargo test --test fuse_api_tests
+
+# Run specific test categories
+cargo test --test fuse_api_tests lookup
+cargo test --test fuse_api_tests getattr
+cargo test --test fuse_api_tests access
+```
+
+Current test coverage: **70.12%** (1617/2306 lines)
 
 ### Test Categories
 

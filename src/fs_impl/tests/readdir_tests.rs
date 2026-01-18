@@ -73,7 +73,10 @@ mod tests {
         assert!(count >= 1, "Should have at least the normal file");
 
         // Verify normal file exists
-        assert!(crate::fs_impl::path_ops::path_exists(&fs, Path::new("/normal.txt")));
+        assert!(crate::fs_impl::path_ops::path_exists(
+            &fs,
+            Path::new("/normal.txt")
+        ));
 
         // Clean up
         crate::fs_impl::file_create::remove_file(&fs, Path::new("/normal.txt")).unwrap();
@@ -121,25 +124,46 @@ mod tests {
 
         // Create nested directory structure
         crate::fs_impl::dir_modify::create_directory(&fs, Path::new("/level1"), 0o755).unwrap();
-        crate::fs_impl::dir_modify::create_directory(&fs, Path::new("/level1/level2"), 0o755).unwrap();
+        crate::fs_impl::dir_modify::create_directory(&fs, Path::new("/level1/level2"), 0o755)
+            .unwrap();
 
         // Create files at different levels
-        crate::fs_impl::file_create::create_file(&fs, Path::new("/level1/file1.txt"), 0o644).unwrap();
-        crate::fs_impl::file_create::create_file(&fs, Path::new("/level1/level2/file2.txt"), 0o644).unwrap();
+        crate::fs_impl::file_create::create_file(&fs, Path::new("/level1/file1.txt"), 0o644)
+            .unwrap();
+        crate::fs_impl::file_create::create_file(&fs, Path::new("/level1/level2/file2.txt"), 0o644)
+            .unwrap();
 
         // Count entries at each level
         // Note: counts include internal directory marker files
-        let count1 = crate::fs_impl::dir_read::get_dir_entry_count(&fs, Path::new("/level1")).unwrap();
-        assert!(count1 >= 1, "Level1 should have at least 1 entry (level2 dir)");
+        let count1 =
+            crate::fs_impl::dir_read::get_dir_entry_count(&fs, Path::new("/level1")).unwrap();
+        assert!(
+            count1 >= 1,
+            "Level1 should have at least 1 entry (level2 dir)"
+        );
 
-        let count2 = crate::fs_impl::dir_read::get_dir_entry_count(&fs, Path::new("/level1/level2")).unwrap();
+        let count2 =
+            crate::fs_impl::dir_read::get_dir_entry_count(&fs, Path::new("/level1/level2"))
+                .unwrap();
         assert_eq!(count2, 1, "Level2 should have exactly 1 entry (file2.txt)");
 
         // Verify the nested structure exists by checking paths
-        assert!(crate::fs_impl::path_ops::path_exists(&fs, Path::new("/level1")));
-        assert!(crate::fs_impl::path_ops::path_exists(&fs, Path::new("/level1/level2")));
-        assert!(crate::fs_impl::path_ops::path_exists(&fs, Path::new("/level1/file1.txt")));
-        assert!(crate::fs_impl::path_ops::path_exists(&fs, Path::new("/level1/level2/file2.txt")));
+        assert!(crate::fs_impl::path_ops::path_exists(
+            &fs,
+            Path::new("/level1")
+        ));
+        assert!(crate::fs_impl::path_ops::path_exists(
+            &fs,
+            Path::new("/level1/level2")
+        ));
+        assert!(crate::fs_impl::path_ops::path_exists(
+            &fs,
+            Path::new("/level1/file1.txt")
+        ));
+        assert!(crate::fs_impl::path_ops::path_exists(
+            &fs,
+            Path::new("/level1/level2/file2.txt")
+        ));
 
         // Clean up
         crate::fs_impl::dir_modify::remove_directory(&fs, Path::new("/level1"), true).unwrap();
@@ -182,8 +206,10 @@ mod tests {
         assert_eq!(count, 0, "New directory should be empty");
 
         // Add files
-        crate::fs_impl::file_create::create_file(&fs, Path::new("/dynamic_dir/file1.txt"), 0o644).unwrap();
-        crate::fs_impl::file_create::create_file(&fs, Path::new("/dynamic_dir/file2.txt"), 0o644).unwrap();
+        crate::fs_impl::file_create::create_file(&fs, Path::new("/dynamic_dir/file1.txt"), 0o644)
+            .unwrap();
+        crate::fs_impl::file_create::create_file(&fs, Path::new("/dynamic_dir/file2.txt"), 0o644)
+            .unwrap();
 
         let count = crate::fs_impl::dir_read::get_dir_entry_count(&fs, dir_path).unwrap();
         assert_eq!(count, 2, "Should have 2 files after adding");
@@ -206,17 +232,24 @@ mod tests {
         crate::fs_impl::dir_modify::create_directory(&fs, dir_path, 0o755).unwrap();
 
         // Create both files and subdirectories
-        crate::fs_impl::file_create::create_file(&fs, Path::new("/mixed_dir/file1.txt"), 0o644).unwrap();
-        crate::fs_impl::file_create::create_file(&fs, Path::new("/mixed_dir/file2.txt"), 0o644).unwrap();
-        crate::fs_impl::dir_modify::create_directory(&fs, Path::new("/mixed_dir/subdir1"), 0o755).unwrap();
-        crate::fs_impl::dir_modify::create_directory(&fs, Path::new("/mixed_dir/subdir2"), 0o755).unwrap();
+        crate::fs_impl::file_create::create_file(&fs, Path::new("/mixed_dir/file1.txt"), 0o644)
+            .unwrap();
+        crate::fs_impl::file_create::create_file(&fs, Path::new("/mixed_dir/file2.txt"), 0o644)
+            .unwrap();
+        crate::fs_impl::dir_modify::create_directory(&fs, Path::new("/mixed_dir/subdir1"), 0o755)
+            .unwrap();
+        crate::fs_impl::dir_modify::create_directory(&fs, Path::new("/mixed_dir/subdir2"), 0o755)
+            .unwrap();
 
         // Count all entries (both files and directories)
         let count = crate::fs_impl::dir_read::get_dir_entry_count(&fs, dir_path).unwrap();
 
         // Note: The count includes both files and directories
         // Also, there may be internal directory marker files
-        assert!(count >= 4, "Should have at least 4 entries (2 files + 2 dirs)");
+        assert!(
+            count >= 4,
+            "Should have at least 4 entries (2 files + 2 dirs)"
+        );
 
         // Clean up
         crate::fs_impl::dir_modify::remove_directory(&fs, dir_path, true).unwrap();

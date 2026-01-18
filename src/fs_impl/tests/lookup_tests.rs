@@ -16,7 +16,7 @@ mod tests {
             path.to_str()
                 .unwrap()
                 .strip_prefix('/')
-                .unwrap_or(path.to_str().unwrap())
+                .unwrap_or(path.to_str().unwrap()),
         );
 
         // Create parent directories if needed
@@ -50,7 +50,10 @@ mod tests {
         // Get inode for the file
         let result = fs.get_or_create_inode(test_path);
 
-        assert!(result.is_ok(), "Should successfully get inode for existing file");
+        assert!(
+            result.is_ok(),
+            "Should successfully get inode for existing file"
+        );
 
         let inode = result.unwrap();
         assert!(inode > 1, "File inode should be greater than root (1)");
@@ -58,7 +61,11 @@ mod tests {
         // Verify we can get the same inode again (consistency)
         let result2 = fs.get_or_create_inode(test_path);
         assert!(result2.is_ok());
-        assert_eq!(inode, result2.unwrap(), "Should get the same inode for the same path");
+        assert_eq!(
+            inode,
+            result2.unwrap(),
+            "Should get the same inode for the same path"
+        );
     }
 
     #[test]
@@ -70,7 +77,10 @@ mod tests {
         let result = fs.get_or_create_inode(test_path);
 
         // This should succeed and allocate a new inode
-        assert!(result.is_ok(), "get_or_create_inode should create new inode for new path");
+        assert!(
+            result.is_ok(),
+            "get_or_create_inode should create new inode for new path"
+        );
 
         let inode = result.unwrap();
         assert!(inode > 1, "New file inode should be greater than root (1)");
@@ -203,9 +213,18 @@ mod tests {
         assert!(inode1 > 1);
         assert!(inode2 > 1);
         assert!(inode3 > 1);
-        assert_ne!(inode1, inode2, "Different paths should have different inodes");
-        assert_ne!(inode2, inode3, "Different paths should have different inodes");
-        assert_ne!(inode1, inode3, "Different paths should have different inodes");
+        assert_ne!(
+            inode1, inode2,
+            "Different paths should have different inodes"
+        );
+        assert_ne!(
+            inode2, inode3,
+            "Different paths should have different inodes"
+        );
+        assert_ne!(
+            inode1, inode3,
+            "Different paths should have different inodes"
+        );
     }
 
     #[test]
@@ -234,6 +253,9 @@ mod tests {
         // Get the same path again - should return the same inode
         let inode2 = fs.get_or_create_inode(path1).unwrap();
 
-        assert_eq!(inode1, inode2, "Inode should be persistent for the same path");
+        assert_eq!(
+            inode1, inode2,
+            "Inode should be persistent for the same path"
+        );
     }
 }

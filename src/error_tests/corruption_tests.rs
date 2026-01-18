@@ -67,25 +67,30 @@ fn test_read_corrupted_metadata() {
         let result = file_read::read_file(&fs, test_path);
 
         // Should fail with an error (could be Fs or Serialization error)
-        assert!(result.is_err(), "Should fail gracefully with corrupted metadata");
+        assert!(
+            result.is_err(),
+            "Should fail gracefully with corrupted metadata"
+        );
 
         // Verify it's an appropriate error type
         match result.unwrap_err() {
             crate::errors::ZthfsError::Serialization(msg) => {
                 let has_keyword = msg.contains("metadata") || msg.contains("json");
-                assert!(has_keyword, "Serialization error should mention metadata or json");
+                assert!(
+                    has_keyword,
+                    "Serialization error should mention metadata or json"
+                );
             }
             crate::errors::ZthfsError::Fs(msg) => {
                 // Also acceptable - might be reported as filesystem error
-                assert!(msg.len() > 0);
+                assert!(!msg.is_empty());
             }
             other => panic!("Expected Serialization or Fs error, got: {:?}", other),
         }
-    } else {
-        // File was too small to use chunked storage, metadata doesn't exist
-        // This is expected behavior - test passes
-        assert!(true);
-    }
+    } // else {
+    // File was too small to use chunked storage, metadata doesn't exist
+    // This is expected behavior - test passes
+    // }
 }
 
 #[test]
@@ -114,7 +119,10 @@ fn test_read_truncated_file() {
         // The decryption should fail because the ciphertext is too short
         let result = file_read::read_file(&fs, test_path);
 
-        assert!(result.is_err(), "Should fail to read truncated encrypted file");
+        assert!(
+            result.is_err(),
+            "Should fail to read truncated encrypted file"
+        );
 
         match result.unwrap_err() {
             crate::errors::ZthfsError::Crypto(_) => {
@@ -125,10 +133,13 @@ fn test_read_truncated_file() {
             }
             crate::errors::ZthfsError::Fs(msg) => {
                 // Also acceptable - IO error during read
-                assert!(msg.len() > 0);
+                assert!(!msg.is_empty());
             }
             other => {
-                panic!("Expected Crypto, Integrity, or Fs error for truncated file, got: {:?}", other);
+                panic!(
+                    "Expected Crypto, Integrity, or Fs error for truncated file, got: {:?}",
+                    other
+                );
             }
         }
     }
@@ -176,7 +187,7 @@ fn test_integrity_check_failure_detection() {
             }
             other => {
                 // At minimum should have failed
-                assert!(format!("{:?}", other).len() > 0);
+                assert!(!format!("{:?}", other).is_empty());
             }
         }
     }
@@ -361,7 +372,10 @@ fn test_nonexistent_file_read() {
             );
         }
         other => {
-            panic!("Expected Fs or Io error for nonexistent file, got: {:?}", other);
+            panic!(
+                "Expected Fs or Io error for nonexistent file, got: {:?}",
+                other
+            );
         }
     }
 }

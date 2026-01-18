@@ -33,8 +33,7 @@ fn test_different_keys_produce_different_ciphertext() {
     // If this test fails, it indicates a catastrophic vulnerability
     // where key material doesn't affect encryption output.
     assert_ne!(
-        ciphertext1,
-        ciphertext2,
+        ciphertext1, ciphertext2,
         "Different keys should produce different ciphertext"
     );
 
@@ -89,8 +88,7 @@ fn test_same_path_different_nonce() {
     // SAFETY: With counter-based nonces, each encryption MUST produce
     // different ciphertext to prevent nonce reuse attacks.
     assert_ne!(
-        ciphertext1,
-        ciphertext2,
+        ciphertext1, ciphertext2,
         "Same file encrypted twice should have different ciphertext (nonce reuse vulnerability)"
     );
 
@@ -104,7 +102,10 @@ fn test_same_path_different_nonce() {
     // For ciphertext1, we need to decrement the counter to get back to
     // the state when it was encrypted, then restore it.
     let counter_after_second = nonce_manager1.get_counter(path).unwrap();
-    assert_eq!(counter_after_second, 2, "Counter should be 2 after two encryptions");
+    assert_eq!(
+        counter_after_second, 2,
+        "Counter should be 2 after two encryptions"
+    );
 
     // Reset and re-encrypt to verify round-trip works correctly
     nonce_manager1.reset_counter(path).unwrap();
@@ -135,8 +136,7 @@ fn test_different_paths_different_nonce() {
     // If same plaintext at different paths produced identical ciphertext,
     // it would indicate poor nonce derivation.
     assert_ne!(
-        ciphertext1,
-        ciphertext2,
+        ciphertext1, ciphertext2,
         "Different paths should produce different ciphertext"
     );
 
@@ -206,7 +206,7 @@ fn test_decryption_after_round_trip() {
     let test_cases = vec![
         b"Short text".to_vec(),
         b"Patient: Jane Smith\nAge: 45\nAllergies: Penicillin".to_vec(),
-        b"".to_vec(), // Empty
+        b"".to_vec(),     // Empty
         vec![b'X'; 1000], // Larger data
     ];
 
@@ -217,7 +217,8 @@ fn test_decryption_after_round_trip() {
         let decrypted = handler.decrypt(&ciphertext, path).unwrap();
 
         assert_eq!(
-            decrypted, plaintext,
+            decrypted,
+            plaintext,
             "Round-trip encryption/decrypt failed for {} bytes",
             plaintext.len()
         );
@@ -238,7 +239,11 @@ fn test_empty_file_encryption() {
     let ciphertext = handler.encrypt(plaintext, path).unwrap();
     let decrypted = handler.decrypt(&ciphertext, path).unwrap();
 
-    assert_eq!(decrypted.len(), 0, "Empty file should remain empty after round-trip");
+    assert_eq!(
+        decrypted.len(),
+        0,
+        "Empty file should remain empty after round-trip"
+    );
     assert!(decrypted.is_empty());
 
     // Ciphertext should not be empty (contains auth tag)

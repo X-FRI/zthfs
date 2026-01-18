@@ -36,7 +36,12 @@ fn create_test_dir(fs: &Zthfs, name: &str) {
 /// 1. Get parent path from inode
 /// 2. Check permissions
 /// 3. Get file attributes
-fn simulate_lookup(fs: &mut Zthfs, req: &TestRequest, parent: u64, name: &OsStr) -> Result<fuser::FileAttr, i32> {
+fn simulate_lookup(
+    fs: &mut Zthfs,
+    req: &TestRequest,
+    parent: u64,
+    name: &OsStr,
+) -> Result<fuser::FileAttr, i32> {
     let uid = req.uid;
     let gid = req.gid;
 
@@ -81,7 +86,11 @@ fn test_lookup_existing_file() {
     assert!(result.is_ok(), "lookup should succeed");
     let attr = result.unwrap();
     assert_eq!(attr.size, 13, "file size should match");
-    assert_eq!(attr.kind, fuser::FileType::RegularFile, "should be a regular file");
+    assert_eq!(
+        attr.kind,
+        fuser::FileType::RegularFile,
+        "should be a regular file"
+    );
 }
 
 #[test]
@@ -111,7 +120,11 @@ fn test_lookup_directory() {
 
     assert!(result.is_ok(), "lookup should succeed");
     let attr = result.unwrap();
-    assert_eq!(attr.kind, fuser::FileType::Directory, "should be a directory");
+    assert_eq!(
+        attr.kind,
+        fuser::FileType::Directory,
+        "should be a directory"
+    );
 }
 
 #[test]
@@ -171,10 +184,17 @@ fn test_lookup_empty_filename() {
     // The actual FUSE lookup would fail earlier in the kernel, but our simulation
     // doesn't have that check. For this test, we just verify the behavior.
     // The lookup succeeds with the root directory's attributes.
-    assert!(result.is_ok(), "empty filename lookup returns root directory");
+    assert!(
+        result.is_ok(),
+        "empty filename lookup returns root directory"
+    );
     let attr = result.unwrap();
     assert_eq!(attr.ino, ROOT_INODE, "should return root inode");
-    assert_eq!(attr.kind, fuser::FileType::Directory, "should be a directory");
+    assert_eq!(
+        attr.kind,
+        fuser::FileType::Directory,
+        "should be a directory"
+    );
 }
 
 // ============================================================================
@@ -213,7 +233,9 @@ fn test_getattr_existing_file() {
     let req = TestRequest::unprivileged();
 
     // Get the inode for the file
-    let ino = fs.get_or_create_inode(std::path::Path::new("/test.txt")).unwrap();
+    let ino = fs
+        .get_or_create_inode(std::path::Path::new("/test.txt"))
+        .unwrap();
 
     let result = simulate_getattr(&mut fs, &req, ino);
 
@@ -233,7 +255,11 @@ fn test_getattr_root_directory() {
     assert!(result.is_ok(), "getattr should succeed for root");
     let attr = result.unwrap();
     assert_eq!(attr.ino, ROOT_INODE, "root inode should be 1");
-    assert_eq!(attr.kind, fuser::FileType::Directory, "root should be a directory");
+    assert_eq!(
+        attr.kind,
+        fuser::FileType::Directory,
+        "root should be a directory"
+    );
 }
 
 #[test]
@@ -323,7 +349,13 @@ fn test_access_write_mask() {
 // ============================================================================
 
 /// Simulate create by using Zthfs's internal file creation
-fn simulate_create(fs: &mut Zthfs, req: &TestRequest, parent: u64, name: &OsStr, _mode: u32) -> Result<fuser::FileAttr, i32> {
+fn simulate_create(
+    fs: &mut Zthfs,
+    req: &TestRequest,
+    parent: u64,
+    name: &OsStr,
+    _mode: u32,
+) -> Result<fuser::FileAttr, i32> {
     let uid = req.uid;
     let gid = req.gid;
 
@@ -339,8 +371,8 @@ fn simulate_create(fs: &mut Zthfs, req: &TestRequest, parent: u64, name: &OsStr,
     // Strip leading "/" for actual file system path
     let relative_path = path.to_string_lossy();
     let relative_path_str = relative_path.as_ref();
-    let fs_path = if relative_path_str.starts_with('/') {
-        fs.data_dir().join(&relative_path_str[1..])
+    let fs_path = if let Some(stripped) = relative_path_str.strip_prefix('/') {
+        fs.data_dir().join(stripped)
     } else {
         fs.data_dir().join(relative_path_str)
     };
@@ -351,12 +383,11 @@ fn simulate_create(fs: &mut Zthfs, req: &TestRequest, parent: u64, name: &OsStr,
     }
 
     // Create parent directories if needed
-    if let Some(parent_dir) = fs_path.parent() {
-        if !parent_dir.exists() {
-            if let Err(_) = fs::create_dir_all(parent_dir) {
-                return Err(libc::EIO);
-            }
-        }
+    if let Some(parent_dir) = fs_path.parent()
+        && !parent_dir.exists()
+        && fs::create_dir_all(parent_dir).is_err()
+    {
+        return Err(libc::EIO);
     }
 
     // Create the file (empty)
@@ -394,7 +425,13 @@ fn test_create_in_nested_path() {
     let req = TestRequest::unprivileged();
 
     // Create file in nested path (parent doesn't exist)
-    let result = simulate_create(&mut fs, &req, ROOT_INODE, OsStr::new("subdir/nested.txt"), 0o644);
+    let result = simulate_create(
+        &mut fs,
+        &req,
+        ROOT_INODE,
+        OsStr::new("subdir/nested.txt"),
+        0o644,
+    );
 
     // This should succeed (creates parent directories)
     assert!(result.is_ok(), "create with nested path should succeed");
@@ -457,7 +494,10 @@ fn test_read_existing_file() {
     assert!(result.is_ok(), "read should succeed");
     let data = result.unwrap();
     // Content should match the original (decrypted by read_file)
-    assert_eq!(data, b"Hello, read test!", "decrypted content should match original");
+    assert_eq!(
+        data, b"Hello, read test!",
+        "decrypted content should match original"
+    );
 }
 
 #[test]
@@ -495,7 +535,12 @@ fn test_read_unauthorized_user() {
 // ============================================================================
 
 /// Simulate write by using Zthfs's internal file writing
-fn simulate_write(fs: &mut Zthfs, req: &TestRequest, path: &std::path::Path, data: &[u8]) -> Result<usize, i32> {
+fn simulate_write(
+    fs: &mut Zthfs,
+    req: &TestRequest,
+    path: &std::path::Path,
+    data: &[u8],
+) -> Result<usize, i32> {
     let uid = req.uid;
     let gid = req.gid;
 
@@ -585,8 +630,8 @@ fn simulate_readdir(fs: &mut Zthfs, req: &TestRequest, ino: u64) -> Result<Vec<S
     // Strip leading "/" for actual filesystem path
     let relative_path = path.to_string_lossy();
     let relative_path_str = relative_path.as_ref();
-    let fs_path = if relative_path_str.starts_with('/') {
-        fs.data_dir().join(&relative_path_str[1..])
+    let fs_path = if let Some(stripped) = relative_path_str.strip_prefix('/') {
+        fs.data_dir().join(stripped)
     } else {
         fs.data_dir().join(relative_path_str)
     };
@@ -595,11 +640,9 @@ fn simulate_readdir(fs: &mut Zthfs, req: &TestRequest, ino: u64) -> Result<Vec<S
     match std::fs::read_dir(&fs_path) {
         Ok(entries) => {
             let mut names = Vec::new();
-            for entry in entries {
-                if let Ok(e) = entry {
-                    if let Ok(name) = e.file_name().into_string() {
-                        names.push(name);
-                    }
+            for e in entries.flatten() {
+                if let Ok(name) = e.file_name().into_string() {
+                    names.push(name);
                 }
             }
             Ok(names)
@@ -674,8 +717,8 @@ fn simulate_mkdir(fs: &mut Zthfs, req: &TestRequest, parent: u64, name: &OsStr) 
     // Strip leading "/" for actual filesystem path
     let relative_path = path.to_string_lossy();
     let relative_path_str = relative_path.as_ref();
-    let fs_path = if relative_path_str.starts_with('/') {
-        fs.data_dir().join(&relative_path_str[1..])
+    let fs_path = if let Some(stripped) = relative_path_str.strip_prefix('/') {
+        fs.data_dir().join(stripped)
     } else {
         fs.data_dir().join(relative_path_str)
     };
@@ -723,7 +766,12 @@ fn test_mkdir_unauthorized() {
 // ============================================================================
 
 /// Simulate unlink by using Zthfs's internal file deletion
-fn simulate_unlink(fs: &mut Zthfs, req: &TestRequest, parent: u64, name: &OsStr) -> Result<(), i32> {
+fn simulate_unlink(
+    fs: &mut Zthfs,
+    req: &TestRequest,
+    parent: u64,
+    name: &OsStr,
+) -> Result<(), i32> {
     let uid = req.uid;
     let gid = req.gid;
 
@@ -739,8 +787,8 @@ fn simulate_unlink(fs: &mut Zthfs, req: &TestRequest, parent: u64, name: &OsStr)
     // Strip leading "/" for actual filesystem path
     let relative_path = path.to_string_lossy();
     let relative_path_str = relative_path.as_ref();
-    let fs_path = if relative_path_str.starts_with('/') {
-        fs.data_dir().join(&relative_path_str[1..])
+    let fs_path = if let Some(stripped) = relative_path_str.strip_prefix('/') {
+        fs.data_dir().join(stripped)
     } else {
         fs.data_dir().join(relative_path_str)
     };
@@ -807,8 +855,8 @@ fn simulate_rmdir(fs: &mut Zthfs, req: &TestRequest, parent: u64, name: &OsStr) 
     // Strip leading "/" for actual filesystem path
     let relative_path = path.to_string_lossy();
     let relative_path_str = relative_path.as_ref();
-    let fs_path = if relative_path_str.starts_with('/') {
-        fs.data_dir().join(&relative_path_str[1..])
+    let fs_path = if let Some(stripped) = relative_path_str.strip_prefix('/') {
+        fs.data_dir().join(stripped)
     } else {
         fs.data_dir().join(relative_path_str)
     };
@@ -851,5 +899,8 @@ fn test_rmdir_nonexistent_directory() {
     let result = simulate_rmdir(&mut fs, &req, ROOT_INODE, OsStr::new("doesnotexist"));
 
     // Should fail
-    assert!(result.is_err(), "rmdir should fail for nonexistent directory");
+    assert!(
+        result.is_err(),
+        "rmdir should fail for nonexistent directory"
+    );
 }

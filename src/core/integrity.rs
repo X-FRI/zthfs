@@ -206,8 +206,9 @@ impl IntegrityHandler {
         if let Some(hmac_key) = config.get_hmac_key() {
             let signature = Self::compute_hmac_signature(checksum, hmac_key)?;
             let sig_xattr_name = format!("{}.checksum_sig", config.xattr_namespace);
-            xattr::set(real_path, &sig_xattr_name, &signature)
-                .map_err(|e| ZthfsError::Integrity(format!("Failed to set signature xattr: {e}")))?;
+            xattr::set(real_path, &sig_xattr_name, &signature).map_err(|e| {
+                ZthfsError::Integrity(format!("Failed to set signature xattr: {e}"))
+            })?;
         }
 
         Ok(())
@@ -616,12 +617,18 @@ mod tests {
 
         // Tampered checksum should not verify
         let tampered_checksum = b"tampered_checksum_value_32b!!";
-        assert!(!IntegrityHandler::verify_hmac_signature(tampered_checksum, &signature, hmac_key).unwrap());
+        assert!(
+            !IntegrityHandler::verify_hmac_signature(tampered_checksum, &signature, hmac_key)
+                .unwrap()
+        );
 
         // Tampered signature should not verify
         let mut tampered_signature = signature.clone();
         tampered_signature[0] ^= 0xFF;
-        assert!(!IntegrityHandler::verify_hmac_signature(checksum, &tampered_signature, hmac_key).unwrap());
+        assert!(
+            !IntegrityHandler::verify_hmac_signature(checksum, &tampered_signature, hmac_key)
+                .unwrap()
+        );
     }
 
     #[test]
@@ -670,10 +677,16 @@ mod tests {
         assert_eq!(retrieved, Some(checksum.to_vec()));
 
         // Tamper with the checksum
-        xattr::set(&test_file, "user.zthfs.checksum", b"tampered_checksum_value_32b!!").unwrap();
+        xattr::set(
+            &test_file,
+            "user.zthfs.checksum",
+            b"tampered_checksum_value_32b!!",
+        )
+        .unwrap();
 
         // Tampered checksum should be rejected (HMAC verification fails)
-        let retrieved_tampered = IntegrityHandler::get_checksum_from_xattr(&test_file, &config).unwrap();
+        let retrieved_tampered =
+            IntegrityHandler::get_checksum_from_xattr(&test_file, &config).unwrap();
         assert_eq!(retrieved_tampered, None); // Signature verification fails
     }
 
@@ -695,15 +708,31 @@ mod tests {
         IntegrityHandler::set_checksum_xattr(&test_file, checksum, &config).unwrap();
 
         // Verify both are stored
-        assert!(xattr::get(&test_file, "user.zthfs.checksum").unwrap().is_some());
-        assert!(xattr::get(&test_file, "user.zthfs.checksum_sig").unwrap().is_some());
+        assert!(
+            xattr::get(&test_file, "user.zthfs.checksum")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            xattr::get(&test_file, "user.zthfs.checksum_sig")
+                .unwrap()
+                .is_some()
+        );
 
         // Remove
         IntegrityHandler::remove_checksum_xattr(&test_file, &config).unwrap();
 
         // Verify both are removed
-        assert!(xattr::get(&test_file, "user.zthfs.checksum").unwrap().is_none());
-        assert!(xattr::get(&test_file, "user.zthfs.checksum_sig").unwrap().is_none());
+        assert!(
+            xattr::get(&test_file, "user.zthfs.checksum")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            xattr::get(&test_file, "user.zthfs.checksum_sig")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

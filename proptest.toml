@@ -1,0 +1,8 @@
+# Proptest configuration for zthfs property-based tests
+
+# Disable forking to avoid issues with parallel test execution
+# Forking can cause issues with temp directories and sled database
+fork = false
+
+# Use a fixed seed for reproducible tests (optional)
+# seed = 0x0d1d_4142_4344

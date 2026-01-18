@@ -6,8 +6,8 @@
 
 use crate::errors::{ZthfsError, ZthfsResult};
 use argon2::{
-    password_hash::{rand_core::OsRng, SaltString},
-    Argon2, Algorithm, Params, Version,
+    Algorithm, Argon2, Params, Version,
+    password_hash::{SaltString, rand_core::OsRng},
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -78,10 +78,12 @@ impl KeyDerivationConfig {
         let salt = SaltString::from_b64(&self.salt_b64)
             .map_err(|e| ZthfsError::Crypto(format!("Invalid salt: {e}")))?;
         let mut salt_bytes = [0u8; 16];
-        let salt_decoded = salt.decode_b64(&mut salt_bytes)
+        let salt_decoded = salt
+            .decode_b64(&mut salt_bytes)
             .map_err(|e| ZthfsError::Crypto(format!("Failed to decode salt: {e}")))?;
 
-        let params = self.get_params()
+        let params = self
+            .get_params()
             .map_err(|e| ZthfsError::Crypto(format!("Invalid params: {e}")))?;
 
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
@@ -104,15 +106,14 @@ impl KeyDerivationConfig {
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> ZthfsResult<()> {
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| ZthfsError::Io(std::io::Error::other(e)))?;
-        std::fs::write(path, json)
-            .map_err(|e| ZthfsError::Io(std::io::Error::other(e)))?;
+        std::fs::write(path, json).map_err(|e| ZthfsError::Io(std::io::Error::other(e)))?;
         Ok(())
     }
 
     /// Load the config from a file.
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> ZthfsResult<Self> {
-        let json = std::fs::read_to_string(path)
-            .map_err(|e| ZthfsError::Io(std::io::Error::other(e)))?;
+        let json =
+            std::fs::read_to_string(path).map_err(|e| ZthfsError::Io(std::io::Error::other(e)))?;
         serde_json::from_str(&json)
             .map_err(|e| ZthfsError::Config(format!("Failed to parse key derivation config: {e}")))
     }
@@ -120,10 +121,18 @@ impl KeyDerivationConfig {
     /// Get recommended passphrase strength score (0-4).
     pub fn passphrase_strength_score(passphrase: &str) -> u8 {
         let len = passphrase.len();
-        if len < 8 { return 0; }
-        if len < 12 { return 1; }
-        if len < 16 { return 2; }
-        if len < 24 { return 3; }
+        if len < 8 {
+            return 0;
+        }
+        if len < 12 {
+            return 1;
+        }
+        if len < 16 {
+            return 2;
+        }
+        if len < 24 {
+            return 3;
+        }
         4
     }
 
@@ -210,8 +219,14 @@ mod tests {
     #[test]
     fn test_passphrase_strength_score() {
         assert_eq!(KeyDerivationConfig::passphrase_strength_score("short"), 0);
-        assert_eq!(KeyDerivationConfig::passphrase_strength_score("longer12345"), 1);
-        assert_eq!(KeyDerivationConfig::passphrase_strength_score("correct horse"), 2);
+        assert_eq!(
+            KeyDerivationConfig::passphrase_strength_score("longer12345"),
+            1
+        );
+        assert_eq!(
+            KeyDerivationConfig::passphrase_strength_score("correct horse"),
+            2
+        );
         assert_eq!(
             KeyDerivationConfig::passphrase_strength_score("correct horse battery"),
             3
@@ -310,10 +325,7 @@ mod tests {
         let key2 = config.derive_key("passphrase2").unwrap();
 
         // Count differing bits
-        let diff_count = key1.iter()
-            .zip(key2.iter())
-            .filter(|(a, b)| a != b)
-            .count();
+        let diff_count = key1.iter().zip(key2.iter()).filter(|(a, b)| a != b).count();
 
         // Keys should be very different (at least 50% of bytes)
         assert!(diff_count >= 16);

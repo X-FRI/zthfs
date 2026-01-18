@@ -58,17 +58,33 @@ fn test_blake3_collision_resistance() {
     // Test various single-bit changes - each data must differ from base_data
     // Use Vec<u8> to avoid fixed-size array type issues
     let test_cases: Vec<(Vec<u8>, &str)> = vec![
-        (b"Patient diagnosis: Hypertension, Stage 2".to_vec(), "Changed last digit"),
-        (b"Patient diagnosis: Hypertension, Stabe 1".to_vec(), "Typo in middle"),
-        (b"patienT diagnosis: Hypertension, Stage 1".to_vec(), "Case change at start"),
-        (b"Patient diagnosis:Hypertension, Stage 1".to_vec(), "Removed space"),
-        (b"\0atient diagnosis: Hypertension, Stage 1".to_vec(), "Null byte at start"),
+        (
+            b"Patient diagnosis: Hypertension, Stage 2".to_vec(),
+            "Changed last digit",
+        ),
+        (
+            b"Patient diagnosis: Hypertension, Stabe 1".to_vec(),
+            "Typo in middle",
+        ),
+        (
+            b"patienT diagnosis: Hypertension, Stage 1".to_vec(),
+            "Case change at start",
+        ),
+        (
+            b"Patient diagnosis:Hypertension, Stage 1".to_vec(),
+            "Removed space",
+        ),
+        (
+            b"\0atient diagnosis: Hypertension, Stage 1".to_vec(),
+            "Null byte at start",
+        ),
     ];
 
     let base_checksum = IntegrityHandler::compute_checksum(base_data, "blake3", &key).unwrap();
 
     for (modified_data, description) in test_cases {
-        let modified_checksum = IntegrityHandler::compute_checksum(&modified_data, "blake3", &key).unwrap();
+        let modified_checksum =
+            IntegrityHandler::compute_checksum(&modified_data, "blake3", &key).unwrap();
 
         // SAFETY: Even small changes must produce completely different checksums.
         assert_ne!(
@@ -89,7 +105,8 @@ fn test_blake3_collision_resistance() {
         assert!(
             diff_bits >= 64,
             "Avalanche effect weak: only {} bits differ for '{}'",
-            diff_bits, description
+            diff_bits,
+            description
         );
     }
 }
@@ -109,8 +126,7 @@ fn test_hmac_signature_prevents_tampering() {
 
     // Verify original signature passes
     assert!(
-        IntegrityHandler::verify_hmac_signature(&checksum, &signature, &hmac_key)
-            .unwrap(),
+        IntegrityHandler::verify_hmac_signature(&checksum, &signature, &hmac_key).unwrap(),
         "Original signature should verify"
     );
 
@@ -137,8 +153,7 @@ fn test_hmac_signature_prevents_tampering() {
     // SAFETY: Wrong HMAC key should fail verification.
     let wrong_key = vec![3u8; 32];
     assert!(
-        !IntegrityHandler::verify_hmac_signature(&checksum, &signature, &wrong_key)
-            .unwrap(),
+        !IntegrityHandler::verify_hmac_signature(&checksum, &signature, &wrong_key).unwrap(),
         "Wrong HMAC key should fail verification"
     );
 }
@@ -182,14 +197,14 @@ fn test_integrity_chain_verification() {
 
     // 2. Checksum was stored and retrieved correctly
     assert_eq!(
-        retrieved_checksum, Some(checksum.clone()),
+        retrieved_checksum,
+        Some(checksum.clone()),
         "Stored checksum should match computed checksum"
     );
 
     // 3. The checksum still verifies against the data
     assert!(
-        IntegrityHandler::verify_integrity(&retrieved_data, &checksum, "blake3", &key)
-            .unwrap(),
+        IntegrityHandler::verify_integrity(&retrieved_data, &checksum, "blake3", &key).unwrap(),
         "Retrieved checksum should verify against retrieved data"
     );
 
@@ -200,8 +215,7 @@ fn test_integrity_chain_verification() {
 
     // Verification should fail
     assert!(
-        !IntegrityHandler::verify_integrity(&tampered_data, &checksum, "blake3", &key)
-            .unwrap(),
+        !IntegrityHandler::verify_integrity(&tampered_data, &checksum, "blake3", &key).unwrap(),
         "Tampered data should fail integrity verification"
     );
 }
@@ -225,12 +239,8 @@ fn test_checksum_key_isolation() {
     );
 
     // Each checksum should only verify with its own key
-    assert!(
-        IntegrityHandler::verify_integrity(data, &checksum1, "blake3", &key1).unwrap()
-    );
-    assert!(
-        IntegrityHandler::verify_integrity(data, &checksum2, "blake3", &key2).unwrap()
-    );
+    assert!(IntegrityHandler::verify_integrity(data, &checksum1, "blake3", &key1).unwrap());
+    assert!(IntegrityHandler::verify_integrity(data, &checksum2, "blake3", &key2).unwrap());
 
     // Cross-key verification should fail
     assert!(
@@ -296,7 +306,8 @@ fn test_checksum_xattr_operations() {
     let retrieved = IntegrityHandler::get_checksum_from_xattr(&test_file, &config).unwrap();
 
     assert_eq!(
-        retrieved, Some(checksum.clone()),
+        retrieved,
+        Some(checksum.clone()),
         "Retrieved checksum should match original"
     );
 
@@ -305,10 +316,7 @@ fn test_checksum_xattr_operations() {
 
     // Verify it's gone
     let after_removal = IntegrityHandler::get_checksum_from_xattr(&test_file, &config).unwrap();
-    assert_eq!(
-        after_removal, None,
-        "Checksum should be None after removal"
-    );
+    assert_eq!(after_removal, None, "Checksum should be None after removal");
 }
 
 /// Test HMAC signature storage and verification.
@@ -338,7 +346,12 @@ fn test_hmac_signature_storage() {
     assert_eq!(retrieved, Some(checksum.to_vec()));
 
     // Tamper with the checksum directly via xattr
-    xattr::set(&test_file, "user.zthfs.checksum", b"tampered_checksum_value_32b!!").unwrap();
+    xattr::set(
+        &test_file,
+        "user.zthfs.checksum",
+        b"tampered_checksum_value_32b!!",
+    )
+    .unwrap();
 
     // HMAC verification should detect the tampering
     let after_tamper = IntegrityHandler::get_checksum_from_xattr(&test_file, &config).unwrap();
@@ -362,19 +375,18 @@ fn test_crc32c_properties() {
     let checksum2 = IntegrityHandler::compute_checksum(data2, "crc32c", &key).unwrap();
 
     // Different data should produce different checksums (usually)
-    assert_ne!(checksum1, checksum2, "Different data should produce different CRC32c");
+    assert_ne!(
+        checksum1, checksum2,
+        "Different data should produce different CRC32c"
+    );
 
     // CRC32c is only 4 bytes
     assert_eq!(checksum1.len(), 4, "CRC32c should be 4 bytes");
     assert_eq!(checksum2.len(), 4, "CRC32c should be 4 bytes");
 
     // Verify correctness
-    assert!(
-        IntegrityHandler::verify_integrity(data1, &checksum1, "crc32c", &key).unwrap()
-    );
-    assert!(
-        IntegrityHandler::verify_integrity(data2, &checksum2, "crc32c", &key).unwrap()
-    );
+    assert!(IntegrityHandler::verify_integrity(data1, &checksum1, "crc32c", &key).unwrap());
+    assert!(IntegrityHandler::verify_integrity(data2, &checksum2, "crc32c", &key).unwrap());
 }
 
 /// Test algorithm validation.
@@ -390,11 +402,7 @@ fn test_unsupported_algorithm_rejection() {
 
     for algo in unsupported {
         let result = IntegrityHandler::compute_checksum(data, algo, &key);
-        assert!(
-            result.is_err(),
-            "Algorithm '{}' should be rejected",
-            algo
-        );
+        assert!(result.is_err(), "Algorithm '{}' should be rejected", algo);
 
         if let Err(e) = result {
             assert!(
@@ -429,7 +437,10 @@ fn test_checksum_length_validation() {
 
     // Wrong length for BLAKE3
     let result = IntegrityHandler::set_checksum_xattr(&test_file, &[1, 2, 3], &blake3_config);
-    assert!(result.is_err(), "Setting 3-byte checksum for BLAKE3 should fail");
+    assert!(
+        result.is_err(),
+        "Setting 3-byte checksum for BLAKE3 should fail"
+    );
 }
 
 /// Test case insensitivity of algorithm names.

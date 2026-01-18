@@ -222,50 +222,54 @@ impl EncryptionHandler {
     }
 
     /// Internal method to generate nonce with specified mode.
-    fn generate_nonce_with_mode(&self, path: &str, for_encrypt: bool) -> ZthfsResult<GenericArray<u8, U12>> {
+    fn generate_nonce_with_mode(
+        &self,
+        path: &str,
+        for_encrypt: bool,
+    ) -> ZthfsResult<GenericArray<u8, U12>> {
         // If using counter-based nonces, use counter in hash
         if self.use_counter_nonces
             && let Some(manager) = &self.nonce_manager
         {
-                // For encryption: get current counter, then increment
-                // For decryption: just get current counter (don't increment)
-                let counter = if for_encrypt {
-                    manager.increment_counter(path)?
-                } else {
-                    // For decryption, we need to find the counter that was used
-                    // Try to get the last used counter from the manager
-                    let c = manager.get_counter(path)?;
-                    if c == 0 {
-                        // File hasn't been encrypted yet, this is an error
-                        return Err(ZthfsError::Crypto(
-                            "Cannot decrypt file: no encryption counter found".to_string()
-                        ));
-                    }
-                    c
-                };
-
-                // Check if we have a cached nonce for this specific counter value
-                let cache_key = format!("{}#{}", path, counter);
-                if let Some(nonce) = self.nonce_cache.get(&cache_key) {
-                    return Ok(*nonce);
+            // For encryption: get current counter, then increment
+            // For decryption: just get current counter (don't increment)
+            let counter = if for_encrypt {
+                manager.increment_counter(path)?
+            } else {
+                // For decryption, we need to find the counter that was used
+                // Try to get the last used counter from the manager
+                let c = manager.get_counter(path)?;
+                if c == 0 {
+                    // File hasn't been encrypted yet, this is an error
+                    return Err(ZthfsError::Crypto(
+                        "Cannot decrypt file: no encryption counter found".to_string(),
+                    ));
                 }
+                c
+            };
 
-                // Generate nonce using BLAKE3(path || nonce_seed || counter)
-                let mut hasher = blake3::Hasher::new();
-                hasher.update(path.as_bytes());
-                hasher.update(&self.nonce_seed);
-                hasher.update(&counter.to_be_bytes());
-                let hash = hasher.finalize();
+            // Check if we have a cached nonce for this specific counter value
+            let cache_key = format!("{}#{}", path, counter);
+            if let Some(nonce) = self.nonce_cache.get(&cache_key) {
+                return Ok(*nonce);
+            }
 
-                let hash_bytes = hash.as_bytes();
-                let nonce_bytes: [u8; 12] = hash_bytes[..12]
-                    .try_into()
-                    .map_err(|_| ZthfsError::Crypto("Failed to convert hash to nonce".to_string()))?;
-                let nonce = GenericArray::from(nonce_bytes);
+            // Generate nonce using BLAKE3(path || nonce_seed || counter)
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(path.as_bytes());
+            hasher.update(&self.nonce_seed);
+            hasher.update(&counter.to_be_bytes());
+            let hash = hasher.finalize();
 
-                // Cache with counter-specific key
-                self.nonce_cache.insert(cache_key, nonce);
-                return Ok(nonce);
+            let hash_bytes = hash.as_bytes();
+            let nonce_bytes: [u8; 12] = hash_bytes[..12]
+                .try_into()
+                .map_err(|_| ZthfsError::Crypto("Failed to convert hash to nonce".to_string()))?;
+            let nonce = GenericArray::from(nonce_bytes);
+
+            // Cache with counter-specific key
+            self.nonce_cache.insert(cache_key, nonce);
+            return Ok(nonce);
         }
 
         // Legacy mode: deterministic nonce (VULNERABLE to reuse on modification)
@@ -636,16 +640,16 @@ mod tests {
         let manager = NonceManager::new(temp_dir.path().to_path_buf());
 
         let path = "/test/file.txt";
-        
+
         // Initial counter should be 0
         assert_eq!(manager.get_counter(path).unwrap(), 0);
-        
+
         // After increment, should be 1
         assert_eq!(manager.increment_counter(path).unwrap(), 1);
-        
+
         // Counter should persist
         assert_eq!(manager.get_counter(path).unwrap(), 1);
-        
+
         // Another increment
         assert_eq!(manager.increment_counter(path).unwrap(), 2);
     }
@@ -658,12 +662,12 @@ mod tests {
 
         let path1 = "/test/file1.txt";
         let path2 = "/test/file2.txt";
-        
+
         // Each path should have its own counter
         assert_eq!(manager.increment_counter(path1).unwrap(), 1);
         assert_eq!(manager.increment_counter(path2).unwrap(), 1);
         assert_eq!(manager.increment_counter(path1).unwrap(), 2);
-        
+
         assert_eq!(manager.get_counter(path1).unwrap(), 2);
         assert_eq!(manager.get_counter(path2).unwrap(), 1);
     }
@@ -675,11 +679,11 @@ mod tests {
         let manager = NonceManager::new(temp_dir.path().to_path_buf());
 
         let path = "/test/file.txt";
-        
+
         manager.increment_counter(path).unwrap();
         manager.increment_counter(path).unwrap();
         assert_eq!(manager.get_counter(path).unwrap(), 2);
-        
+
         // Reset should bring counter back to 0
         manager.reset_counter(path).unwrap();
         assert_eq!(manager.get_counter(path).unwrap(), 0);
@@ -692,10 +696,10 @@ mod tests {
         let manager = NonceManager::new(temp_dir.path().to_path_buf());
 
         let path = "/test/file.txt";
-        
+
         manager.increment_counter(path).unwrap();
         assert!(manager.counter_cache.contains_key(path));
-        
+
         manager.remove_counter(path).unwrap();
         assert!(!manager.counter_cache.contains_key(path));
     }
@@ -706,70 +710,70 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let manager = NonceManager::with_namespace(
             temp_dir.path().to_path_buf(),
-            "custom.namespace".to_string()
+            "custom.namespace".to_string(),
         );
-        
+
         let path = "/test/file.txt";
         assert_eq!(manager.increment_counter(path).unwrap(), 1);
     }
 
     #[test]
     fn test_encryption_handler_with_nonce_manager() {
-        use tempfile::tempdir;
         use std::sync::Arc;
-        
+        use tempfile::tempdir;
+
         let temp_dir = tempdir().unwrap();
         let config = EncryptionConfig::with_random_keys();
         let manager = Arc::new(NonceManager::new(temp_dir.path().to_path_buf()));
-        
+
         let handler = EncryptionHandler::with_nonce_manager(&config, manager.clone());
-        
+
         assert!(handler.uses_counter_nonces());
-        
+
         let path = "/test/file.txt";
-        
+
         // First encryption should use counter 1
         let nonce1 = handler.generate_nonce(path).unwrap();
         assert_eq!(manager.get_counter(path).unwrap(), 1);
-        
+
         // Second encryption should use counter 2
         let nonce2 = handler.generate_nonce(path).unwrap();
         assert_eq!(manager.get_counter(path).unwrap(), 2);
-        
+
         // Nonces should be different
         assert_ne!(nonce1, nonce2);
     }
 
     #[test]
     fn test_encryption_handler_set_nonce_manager() {
-        use tempfile::tempdir;
         use std::sync::Arc;
-        
+        use tempfile::tempdir;
+
         let temp_dir = tempdir().unwrap();
         let config = EncryptionConfig::with_random_keys();
-        
+
         let mut handler = EncryptionHandler::new(&config);
         assert!(!handler.uses_counter_nonces());
-        
+
         let manager = Arc::new(NonceManager::new(temp_dir.path().to_path_buf()));
         handler.set_nonce_manager(manager);
-        
+
         assert!(handler.uses_counter_nonces());
     }
 
     #[test]
     fn test_counter_based_nonce_uniqueness() {
-        use tempfile::tempdir;
         use std::sync::Arc;
-        
+        use tempfile::tempdir;
+
         let temp_dir = tempdir().unwrap();
         let config = EncryptionConfig::with_random_keys();
         let manager = Arc::new(NonceManager::new(temp_dir.path().to_path_buf()));
-        
+
         let handler = EncryptionHandler::with_nonce_manager(&config, manager);
-        
+
         let path = "/test/file.txt";
-        
+
         // Generate 100 nonces for the same path
         let mut nonces = std::collections::HashSet::new();
         for _ in 0..100 {
@@ -778,39 +782,39 @@ mod tests {
             let nonce_vec: Vec<u8> = nonce.to_vec();
             nonces.insert(nonce_vec);
         }
-        
+
         // All nonces should be unique
         assert_eq!(nonces.len(), 100);
     }
 
     #[test]
     fn test_nonce_no_reuse_across_file_modifications() {
-        use tempfile::tempdir;
         use std::sync::Arc;
-        
+        use tempfile::tempdir;
+
         let temp_dir = tempdir().unwrap();
         let config = EncryptionConfig::with_random_keys();
         let manager = Arc::new(NonceManager::new(temp_dir.path().to_path_buf()));
-        
+
         let handler = EncryptionHandler::with_nonce_manager(&config, manager);
-        
+
         let path = "/medical/patient_record.txt";
         let data1 = b"Initial diagnosis: Healthy";
         let data2 = b"Updated diagnosis: Condition detected";
         let data3 = b"Final diagnosis: Recovered";
-        
+
         // First version: encrypt and immediately decrypt
         let encrypted1 = handler.encrypt(data1, path).unwrap();
         assert_eq!(handler.decrypt(&encrypted1, path).unwrap(), data1.to_vec());
-        
+
         // Second version: encrypt and immediately decrypt
         let encrypted2 = handler.encrypt(data2, path).unwrap();
         assert_eq!(handler.decrypt(&encrypted2, path).unwrap(), data2.to_vec());
-        
+
         // Third version: encrypt and immediately decrypt
         let encrypted3 = handler.encrypt(data3, path).unwrap();
         assert_eq!(handler.decrypt(&encrypted3, path).unwrap(), data3.to_vec());
-        
+
         // All ciphertexts should be different (different nonces used)
         assert_ne!(encrypted1, encrypted2);
         assert_ne!(encrypted2, encrypted3);
@@ -821,40 +825,40 @@ mod tests {
     fn test_legacy_mode_nonce_reuse_warning() {
         let config = EncryptionConfig::with_random_keys();
         let handler = EncryptionHandler::new(&config);
-        
+
         assert!(!handler.uses_counter_nonces());
-        
+
         let path = "/test/file.txt";
-        
+
         // In legacy mode, same path produces same nonce
         let nonce1 = handler.generate_nonce(path).unwrap();
         let nonce2 = handler.generate_nonce(path).unwrap();
         assert_eq!(nonce1, nonce2);
-        
+
         // This demonstrates the VULNERABILITY: modifying a file
         // would reuse the same nonce
     }
 
     #[test]
     fn test_encryption_decryption_with_nonce_manager() {
-        use tempfile::tempdir;
         use std::sync::Arc;
-        
+        use tempfile::tempdir;
+
         let temp_dir = tempdir().unwrap();
         let config = EncryptionConfig::with_random_keys();
         let manager = Arc::new(NonceManager::new(temp_dir.path().to_path_buf()));
-        
+
         // Create separate handler instances to simulate real-world usage
         let handler1 = EncryptionHandler::with_nonce_manager(&config, manager.clone());
         let handler2 = EncryptionHandler::with_nonce_manager(&config, manager);
-        
+
         let test_data = b"Sensitive medical data requiring nonce uniqueness!";
         let path = "/medical/patient_123.txt";
-        
+
         // Encrypt with one handler, decrypt with another (same underlying manager)
         let encrypted = handler1.encrypt(test_data, path).unwrap();
         let decrypted = handler2.decrypt(&encrypted, path).unwrap();
-        
+
         assert_eq!(test_data, decrypted.as_slice());
     }
 }

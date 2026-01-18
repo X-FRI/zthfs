@@ -14,8 +14,25 @@ use zthfs::fs_impl::{
 };
 
 /// Creates a temporary test filesystem without mounting
+///
+/// Each test gets a unique temporary directory namespace to avoid
+/// interference when tests run in parallel.
 fn create_test_fs() -> (TempDir, Zthfs) {
-    let temp_dir = TempDir::new().unwrap();
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    // Use a global counter to generate unique IDs for each test
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    // Combine counter with high-precision timestamp for uniqueness
+    let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+
+    let unique_id = format!("zthfs_prop_test_{}_{}", counter, timestamp);
+
+    let temp_dir = TempDir::with_prefix(&unique_id).unwrap();
     let config = FilesystemConfigBuilder::new()
         .data_dir(temp_dir.path().to_string_lossy().to_string())
         .logging(LogConfig {
@@ -206,7 +223,13 @@ proptest! {
         let exists_before = path_ops::path_exists(&fs, path);
 
         // Reload the filesystem (simulate restart)
+        // Explicitly drop the filesystem to ensure sled database is closed
         drop(fs);
+
+        // Give the OS a moment to fully release file handles
+        // This is especially important for parallel test execution
+        std::thread::sleep(std::time::Duration::from_millis(1));
+
         let config = create_test_config(temp_dir.path());
         let fs = zthfs::fs_impl::Zthfs::new(&config).unwrap();
 

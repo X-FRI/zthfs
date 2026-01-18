@@ -48,7 +48,10 @@ mod tests {
         // Read back and verify
         let read_data = crate::fs_impl::file_read::read_file(&fs, file_path).unwrap();
         let expected = b"0000000000XXXXXXXXXX2222222222";
-        assert_eq!(read_data, expected, "Write at offset should modify correct portion");
+        assert_eq!(
+            read_data, expected,
+            "Write at offset should modify correct portion"
+        );
 
         // Clean up
         crate::fs_impl::file_create::remove_file(&fs, file_path).unwrap();
@@ -67,12 +70,16 @@ mod tests {
         // Append more data by writing at the end
         let initial_size = initial_data.len() as i64;
         let append_data = b"Appended more data!";
-        crate::fs_impl::file_write::write_partial(&fs, file_path, initial_size, append_data).unwrap();
+        crate::fs_impl::file_write::write_partial(&fs, file_path, initial_size, append_data)
+            .unwrap();
 
         // Read back and verify
         let read_data = crate::fs_impl::file_read::read_file(&fs, file_path).unwrap();
         let expected = b"Initial content. Appended more data!";
-        assert_eq!(read_data, expected, "Append should extend file with new data");
+        assert_eq!(
+            read_data, expected,
+            "Append should extend file with new data"
+        );
 
         // Clean up
         crate::fs_impl::file_create::remove_file(&fs, file_path).unwrap();
@@ -121,7 +128,10 @@ mod tests {
 
         // But read back gives the original decrypted data
         let read_data = crate::fs_impl::file_read::read_file(&fs, file_path).unwrap();
-        assert_eq!(read_data, test_data, "Decrypted read should match original data");
+        assert_eq!(
+            read_data, test_data,
+            "Decrypted read should match original data"
+        );
 
         // Clean up
         crate::fs_impl::file_create::remove_file(&fs, file_path).unwrap();
@@ -188,7 +198,8 @@ mod tests {
         // Write at offset beyond current file size (creates sparse-like file)
         let large_offset = 1000i64;
         let sparse_data = b"END";
-        crate::fs_impl::file_write::write_partial(&fs, file_path, large_offset, sparse_data).unwrap();
+        crate::fs_impl::file_write::write_partial(&fs, file_path, large_offset, sparse_data)
+            .unwrap();
 
         // Read back and verify size
         let read_data = crate::fs_impl::file_read::read_file(&fs, file_path).unwrap();

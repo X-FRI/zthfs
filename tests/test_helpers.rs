@@ -52,6 +52,7 @@ pub fn create_test_fs() -> (TempDir, Zthfs) {
 pub struct TestFs {
     pub mount_dir: TempDir,
     pub data_dir: TempDir,
+    #[allow(dead_code)]
     pub fs: Zthfs,
 }
 
@@ -102,6 +103,7 @@ impl Default for TestFs {
 /// A mounted FUSE filesystem with automatic unmounting on drop
 ///
 /// This is a RAII guard that will unmount the filesystem when dropped.
+#[allow(dead_code)]
 pub struct MountedFs {
     #[allow(dead_code)]
     session: fuser::BackgroundSession,
@@ -111,6 +113,7 @@ pub struct MountedFs {
     _data_dir: TempDir,
 }
 
+#[allow(dead_code)]
 impl MountedFs {
     /// Mounts the test filesystem and returns a guard that auto-unmounts
     pub fn new(test_fs: TestFs) -> Self {
