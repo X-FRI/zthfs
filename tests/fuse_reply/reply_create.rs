@@ -23,9 +23,9 @@ impl CaptureReplyCreate {
         }
     }
 
-    pub fn created(&mut self, ttl: Duration, attr: FileAttr, generation: u64, flags: u32) {
-        self.ttl = Some(ttl);
-        self.attr = Some(attr);
+    pub fn created(&mut self, ttl: &Duration, attr: &FileAttr, generation: u64, flags: u32) {
+        self.ttl = Some(*ttl);
+        self.attr = Some(*attr);
         self.generation = Some(generation);
         self.flags = Some(flags);
     }

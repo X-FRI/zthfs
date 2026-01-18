@@ -23,9 +23,9 @@ impl CaptureReplyAttr {
     }
 
     /// Mimics fuser::ReplyAttr::attr()
-    pub fn attr(&mut self, ttl: Duration, attr: FileAttr) {
-        self.ttl = Some(ttl);
-        self.attr = Some(attr);
+    pub fn attr(&mut self, ttl: &Duration, attr: &FileAttr) {
+        self.ttl = Some(*ttl);
+        self.attr = Some(*attr);
     }
 
     /// Mimics fuser::ReplyAttr::error()

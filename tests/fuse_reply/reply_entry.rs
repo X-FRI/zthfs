@@ -30,9 +30,9 @@ impl CaptureReplyEntry {
     }
 
     /// Mimics fuser::ReplyEntry::entry()
-    pub fn entry(&mut self, ttl: Duration, attr: FileAttr, generation: u64) {
-        self.ttl = Some(ttl);
-        self.attr = Some(attr);
+    pub fn entry(&mut self, ttl: &Duration, attr: &FileAttr, generation: u64) {
+        self.ttl = Some(*ttl);
+        self.attr = Some(*attr);
         self.generation = Some(generation);
     }
 
