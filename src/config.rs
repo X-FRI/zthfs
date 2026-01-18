@@ -455,10 +455,20 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = FilesystemConfig::default();
-        // Without production feature, default config passes basic validation
-        assert!(config.validate().is_ok());
-        // But it has an insecure key
+        // It has an insecure key
         assert!(config.encryption.is_insecure_default());
+
+        #[cfg(feature = "production")]
+        {
+            // With production feature, validate() should reject insecure keys
+            assert!(config.validate().is_err());
+        }
+
+        #[cfg(not(feature = "production"))]
+        {
+            // Without production feature, default config passes basic validation
+            assert!(config.validate().is_ok());
+        }
     }
 
     #[test]
@@ -713,10 +723,19 @@ mod tests {
             ..Default::default()
         };
 
-        // validate() should pass
-        assert!(config.validate().is_ok());
+        #[cfg(feature = "production")]
+        {
+            // With production feature, validate() should also reject insecure keys
+            assert!(config.validate().is_err());
+        }
 
-        // validate_with_production_checks() should fail due to insecure default
+        #[cfg(not(feature = "production"))]
+        {
+            // Without production feature, validate() should pass
+            assert!(config.validate().is_ok());
+        }
+
+        // validate_with_production_checks() should always fail due to insecure default
         assert!(config.validate_with_production_checks().is_err());
         match config.validate_with_production_checks() {
             Err(ZthfsError::Config(msg)) => assert!(msg.contains("DEADBEEF")),
