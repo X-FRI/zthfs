@@ -431,6 +431,186 @@ fn test_truncate_stress() {
 
 #[test]
 #[ignore]
+fn test_large_file_write_and_read() {
+    let mounted = setup_mounted_fs();
+    let mount_path = mounted.path();
+
+    let file_path = mount_path.join("large_file_rw.bin");
+    let file_size = 100 * 1024 * 1024; // 100 MB
+    let buffer_size = 1024 * 1024; // 1 MB chunks for efficiency
+
+    // Create a pattern for verification
+    let write_buffer: Vec<u8> = (0..255)
+        .cycle()
+        .take(buffer_size)
+        .collect();
+
+    // Write large file in chunks
+    {
+        let mut file = File::create(&file_path).expect("Failed to create file");
+        let mut written = 0;
+
+        while written < file_size {
+            file.write_all(&write_buffer)
+                .expect("Failed to write chunk");
+            written += buffer_size;
+        }
+
+        file.sync_all().expect("Failed to sync file");
+    }
+
+    // Verify file size
+    let metadata = fs::metadata(&file_path).expect("Failed to get metadata");
+    assert_eq!(
+        metadata.len(),
+        file_size as u64,
+        "File should have correct size"
+    );
+
+    // Read back and verify content
+    {
+        let mut file = File::open(&file_path).expect("Failed to open file");
+        let mut read_buffer = vec![0u8; buffer_size];
+        let mut total_read = 0;
+
+        while total_read < file_size {
+            let bytes_read = file
+                .read(&mut read_buffer)
+                .expect("Failed to read chunk");
+            assert!(bytes_read > 0, "Should read data");
+
+            // Verify content matches expected pattern
+            for (i, &byte) in read_buffer.iter().take(bytes_read).enumerate() {
+                let expected = ((total_read + i) % 256) as u8;
+                assert_eq!(byte, expected, "Data mismatch at offset {}", total_read + i);
+            }
+
+            total_read += bytes_read;
+        }
+
+        assert_eq!(total_read, file_size, "Should read entire file");
+    }
+}
+
+#[test]
+#[ignore]
+fn test_random_access_large_file() {
+    let mounted = setup_mounted_fs();
+    let mount_path = mounted.path();
+
+    let file_path = mount_path.join("random_access_large.bin");
+    let file_size = 10 * 1024 * 1024; // 10 MB
+
+    // Create file with known pattern
+    {
+        let mut file = File::create(&file_path).expect("Failed to create file");
+        let data: Vec<u8> = (0..255).cycle().take(file_size).collect();
+        file.write_all(&data).expect("Failed to write data");
+        file.sync_all().expect("Failed to sync");
+    }
+
+    // Verify file size
+    let metadata = fs::metadata(&file_path).expect("Failed to get metadata");
+    assert_eq!(metadata.len(), file_size as u64, "File should have correct size");
+
+    // Test random access reads at various positions
+    {
+        let mut file = File::open(&file_path).expect("Failed to open file");
+
+        // Test positions: start, middle, near end, and various offsets
+        let test_positions = vec![
+            0,
+            1,
+            100,
+            4096, // Page boundary
+            10_000,
+            100_000,
+            500_000,
+            1_000_000, // 1 MB
+            5_000_000, // 5 MB
+            file_size - 4096, // Near end, page boundary
+            file_size - 1000,
+            file_size - 100,
+            file_size - 10,
+            file_size - 1,
+        ];
+
+        for pos in test_positions {
+            file.seek(SeekFrom::Start(pos as u64))
+                .expect("Failed to seek");
+
+            // Read a small buffer to verify
+            let read_size = 100.min(file_size - pos);
+            let mut buffer = vec![0u8; read_size];
+            file.read_exact(&mut buffer)
+                .expect("Failed to read buffer");
+
+            // Verify each byte
+            for (i, &byte) in buffer.iter().enumerate() {
+                let expected = ((pos + i) % 256) as u8;
+                assert_eq!(
+                    byte, expected,
+                    "Data mismatch at position {} (read from {})",
+                    pos + i, pos
+                );
+            }
+        }
+    }
+
+    // Test random access writes
+    {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .open(&file_path)
+            .expect("Failed to open for writing");
+
+        // Write at specific positions
+        let write_positions = vec![
+            (0, [0xAAu8; 50].as_slice()),
+            (1_000_000, [0xBBu8; 50].as_slice()),
+            (5_000_000, [0xCCu8; 50].as_slice()),
+            (file_size - 100, [0xDDu8; 50].as_slice()),
+        ];
+
+        for (pos, data) in write_positions {
+            file.seek(SeekFrom::Start(pos as u64))
+                .expect("Failed to seek for write");
+            file.write_all(data)
+                .expect("Failed to write at position");
+        }
+
+        file.sync_all().expect("Failed to sync writes");
+    }
+
+    // Verify the writes
+    {
+        let mut file = File::open(&file_path).expect("Failed to open for verification");
+
+        // Verify position 0
+        file.seek(SeekFrom::Start(0)).expect("Failed to seek");
+        let mut buffer = [0u8; 50];
+        file.read_exact(&mut buffer).expect("Failed to read");
+        assert_eq!(&buffer, &[0xAAu8; 50], "Data mismatch at position 0");
+
+        // Verify position 1_000_000
+        file.seek(SeekFrom::Start(1_000_000)).expect("Failed to seek");
+        file.read_exact(&mut buffer).expect("Failed to read");
+        assert_eq!(&buffer, &[0xBBu8; 50], "Data mismatch at position 1M");
+
+        // Verify position 5_000_000
+        file.seek(SeekFrom::Start(5_000_000)).expect("Failed to seek");
+        file.read_exact(&mut buffer).expect("Failed to read");
+        assert_eq!(&buffer, &[0xCCu8; 50], "Data mismatch at position 5M");
+
+        // Verify position file_size - 100
+        file.seek(SeekFrom::Start((file_size - 100) as u64)).expect("Failed to seek");
+        file.read_exact(&mut buffer).expect("Failed to read");
+        assert_eq!(&buffer, &[0xDDu8; 50], "Data mismatch near end");
+    }
+}
+
+#[test]
+#[ignore]
 fn test_mixed_operations_stress() {
     let mounted = setup_mounted_fs();
     let mount_path = mounted.path();
