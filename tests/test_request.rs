@@ -45,18 +45,6 @@ impl TestRequest {
     pub fn with_gid(gid: u32) -> Self {
         Self::new(0, gid)
     }
-
-    /// Convert to an fuser Request if needed
-    ///
-    /// Note: This method is not currently implementable because fuser::Request::new()
-    /// is private and requires a ChannelSender and raw data buffer. For testing
-    /// purposes, use the TestRequest directly and extract uid/gid as needed.
-    #[allow(dead_code)]
-    pub fn to_fuser_request(&self) -> Option<fuser::Request<'_>> {
-        // Cannot construct a real fuser::Request without internal channel
-        // This is a placeholder for future compatibility
-        None
-    }
 }
 
 impl Default for TestRequest {
