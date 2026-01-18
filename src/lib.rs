@@ -52,6 +52,8 @@
 
 pub mod config;
 pub mod core;
+#[cfg(test)]
+mod error_tests;
 pub mod errors;
 pub mod fs_impl;
 pub mod key_derivation;
