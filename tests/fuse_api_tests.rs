@@ -489,3 +489,75 @@ fn test_read_unauthorized_user() {
     assert!(result.is_err(), "unauthorized user should be denied");
     assert_eq!(result.unwrap_err(), libc::EACCES, "should return EACCES");
 }
+
+// ============================================================================
+// Write Tests
+// ============================================================================
+
+/// Simulate write by using Zthfs's internal file writing
+fn simulate_write(fs: &mut Zthfs, req: &TestRequest, path: &std::path::Path, data: &[u8]) -> Result<usize, i32> {
+    let uid = req.uid;
+    let gid = req.gid;
+
+    // Check permission
+    if !fs.check_permission(uid, gid) {
+        return Err(libc::EACCES);
+    }
+
+    // Write the file (will be encrypted)
+    match zthfs::fs_impl::file_write::write_file(fs, path, data) {
+        Ok(()) => Ok(data.len()),
+        Err(_) => Err(libc::EIO),
+    }
+}
+
+#[test]
+fn test_write_new_file() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    let req = TestRequest::unprivileged();
+
+    let data = b"Hello, write!";
+    let path = std::path::Path::new("/write.txt");
+
+    let result = simulate_write(&mut fs, &req, path, data);
+
+    assert!(result.is_ok(), "write should succeed");
+    assert_eq!(result.unwrap(), data.len(), "should return bytes written");
+
+    // Verify file was written
+    let file_path = fs.data_dir().join("write.txt");
+    assert!(file_path.exists(), "file should have been created");
+}
+
+#[test]
+fn test_write_append() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    // Create initial file
+    create_test_file(&fs, "append.txt", b"Hello");
+
+    let req = TestRequest::unprivileged();
+
+    let append_data = b" World";
+    let path = std::path::Path::new("/append.txt");
+
+    let result = simulate_write(&mut fs, &req, path, append_data);
+
+    assert!(result.is_ok(), "append should succeed");
+}
+
+#[test]
+fn test_write_unauthorized_user() {
+    let (_temp_dir, mut fs) = create_test_fs();
+
+    let req = TestRequest::new(99999, 99999);
+
+    let data = b"Should not write";
+    let path = std::path::Path::new("/denied.txt");
+
+    let result = simulate_write(&mut fs, &req, path, data);
+
+    assert!(result.is_err(), "unauthorized user should be denied");
+    assert_eq!(result.unwrap_err(), libc::EACCES, "should return EACCES");
+}
