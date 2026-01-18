@@ -4,28 +4,27 @@
 //! and get its attributes. In zthfs, this maps to getting/creating inodes
 //! for file paths.
 
-use std::path::Path;
-
-/// Helper to create a test file at a given path in the real data directory
-fn setup_test_file(fs: &crate::fs_impl::Zthfs, path: &Path) {
-    let real_path = fs.data_dir().join(
-        path.to_str()
-            .unwrap()
-            .strip_prefix('/')
-            .unwrap_or(path.to_str().unwrap())
-    );
-
-    // Create parent directories if needed
-    if let Some(parent) = real_path.parent() {
-        std::fs::create_dir_all(parent).unwrap();
-    }
-    std::fs::write(&real_path, b"test data").unwrap();
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::path::Path;
+
     use crate::fs_impl::tests::fuse_test_utils::create_test_fs;
+
+    /// Helper to create a test file at a given path in the real data directory
+    fn setup_test_file(fs: &crate::fs_impl::Zthfs, path: &Path) {
+        let real_path = fs.data_dir().join(
+            path.to_str()
+                .unwrap()
+                .strip_prefix('/')
+                .unwrap_or(path.to_str().unwrap())
+        );
+
+        // Create parent directories if needed
+        if let Some(parent) = real_path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&real_path, b"test data").unwrap();
+    }
 
     #[test]
     fn test_lookup_root_inode() {
@@ -115,9 +114,18 @@ mod tests {
             "Should be able to retrieve path from inode"
         );
 
-        // Note: The path might not match exactly due to how paths are stored
-        // but we should get back some path
-        assert!(retrieved_path.unwrap().to_string_lossy().contains("roundtrip_test"));
+        // The path returned contains the filename we looked up.
+        // Note: We use a partial match (contains) rather than exact equality because
+        // the filesystem stores paths in its internal canonicalized form, which may
+        // differ from the input path (e.g., resolving "..", ".", symlinks, or relative
+        // components). As long as the filename is present in the returned path, the
+        // roundtrip lookup is working correctly.
+        let retrieved_path_ref = retrieved_path.unwrap();
+        let retrieved_path_str = retrieved_path_ref.to_string_lossy();
+        assert!(
+            retrieved_path_str.contains("roundtrip_test"),
+            "Retrieved path '{retrieved_path_str}' should contain the filename 'roundtrip_test'"
+        );
     }
 
     #[test]
@@ -125,6 +133,8 @@ mod tests {
         let (_temp_dir, fs) = create_test_fs();
 
         // Get current user's uid/gid
+        // SAFETY: getuid() and getgid() are async-signal-safe libc functions that always
+        // succeed and return valid uid_t/gid_t values. They have no preconditions.
         let current_uid = unsafe { libc::getuid() };
         let current_gid = unsafe { libc::getgid() };
 
@@ -165,6 +175,8 @@ mod tests {
         let (_temp_dir, fs) = create_test_fs();
 
         // Get current user's gid (which is in allowed_groups)
+        // SAFETY: getgid() is an async-signal-safe libc function that always succeeds
+        // and returns a valid gid_t value. It has no preconditions.
         let current_gid = unsafe { libc::getgid() };
 
         // A user with an authorized GID should have access

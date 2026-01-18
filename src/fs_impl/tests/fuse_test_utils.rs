@@ -54,12 +54,18 @@ impl MockRequest {
 }
 
 /// Test helper to verify reply error codes
+///
+/// TODO: This trait will be used in future tasks for testing FUSE reply verification.
+/// Currently unused as reply testing requires more complex FUSE integration.
 pub trait ReplyExt {
     fn is_error(&self) -> bool;
     fn error_code(&self) -> Option<i32>;
 }
 
 /// Capture reply state for testing
+///
+/// TODO: This struct will be used in future tasks for capturing and verifying FUSE reply
+/// state. Currently unused as reply testing requires more complex FUSE integration.
 pub struct TestReply<T> {
     pub reply: Option<T>,
     pub error: Option<i32>,
@@ -87,6 +93,8 @@ impl<T> TestReply<T> {
 /// Creates a test filesystem configuration with disabled logging and permissive security
 pub fn create_test_config(data_dir: &std::path::Path) -> FilesystemConfig {
     // Get current user's uid/gid for test configuration
+    // SAFETY: getuid() and getgid() are async-signal-safe libc functions that always
+    // succeed and return valid uid_t/gid_t values. They have no preconditions.
     let current_uid = unsafe { libc::getuid() };
     let current_gid = unsafe { libc::getgid() };
 
